@@ -85,7 +85,9 @@ SENSITIVE_APPEARANCE_TERMS = {
     "attractive",
     "ugly",
     "fat",
-    "thin",
+    # ponytail: "thin" removed — it killed every "thin branches/cables/strips"
+    # caption the detail checklist encourages. Person-directed body remarks
+    # remain covered by the other terms and the style prompts.
     "body",
 }
 LOW_TASTE_TERMS = {

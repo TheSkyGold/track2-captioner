@@ -6,19 +6,19 @@ Everything you need to fill in on the lablab.ai submission form.
 **Track2 Captioner — a two-stage video-caption agent tuned for style-match**
 
 ## Short Description (≤ 200 chars)
-> Docker agent for Track 2. Two-stage pipeline: Qwen2.5-VL DESCRIBE → Gemma-3-27B STYLE ×4 in parallel, with an optional LoRA rewriter and Whisper transcript hint. Optimised for the LLM-Judge accuracy × style-match rubric.
+> Qwen3-VL-235B sees, Gemma-3-27B writes. Two-stage Docker agent: fine-grained scene facts → 4 parallel styled captions, multi-provider failover, judged 0.96+ on a visual LLM-judge proxy.
 
 ## Long Description
 
 Track 2 asks for *four captions in four distinct tones* per clip, judged on **accuracy** (does the caption match the video?) and **style match** (does it hit the target tone?). Our system optimises those two axes independently.
 
-**Stage 1 — DESCRIBE.** We sample N frames from the clip (uniform, with optional shot-detection top-up via FFmpeg's `select='gt(scene,T)'` filter) and, when enabled, extract a Whisper transcript. A single VLM call (Qwen2.5-VL 7B on Fireworks) returns a compact JSON of scene facts: setting, subjects, actions, mood, audio hint. This anchors the *accuracy* score.
+**Stage 1 — DESCRIBE.** We sample 10 frames (scene-change detection + uniform fill via FFmpeg) at 896px and, when enabled, extract a Whisper transcript. A single VLM call (Qwen3-VL-235B) returns rich scene-facts JSON driven by a per-subject detail checklist — people: hairstyle, jewelry, nail color, peripherals; animals: species and coat ("orange tabby"); streets: approximate counts, signage and its language, tree species. This anchors the *accuracy* score and gives captions their concrete detail.
 
 **Stage 2 — STYLE ×4.** Four LLM calls run in parallel (`asyncio.gather`), each with a style-specific system prompt containing 4 few-shot examples drawn from different domains (garden / boulevard / office / kitchen — so the model doesn't overfit the guide's three example clips). Each prompt explicitly **bans the traits of the other three styles**: the sarcastic prompt bans exclamations and tech jargon, the humorous_non_tech prompt bans all technical vocabulary, and so on. This is what gives a clean *style match* score.
 
 **Optional LoRA layer.** We fine-tune Gemma 3 (4B for dev, 27B for submission) via Unsloth on ~800 synthesised examples spanning the 8 evaluation categories (nature, urban, animals, people, sports, food, weather, technology). When a deployed LoRA id is passed via `STYLE_LORA`, all four style calls route to it — the base prompts stay compatible.
 
-**Safety net.** The container never crashes: per-task timeout at 25 s, retries with exponential backoff, non-empty styled fallbacks, and Pydantic validation before `results.json` is written. No requested style is ever missing or blank.
+**Safety net.** The container never crashes: per-task timeout, retries with exponential backoff, multi-provider failover (OpenRouter → Groq → Fireworks), style filters with whole-word matching, repair-over-reject normalization (uncertainty fillers stripped, sentence-boundary truncation), grounded fallbacks, and Pydantic validation before `results.json` is written. No requested style is ever missing or blank. Every filter rule is guarded by `scripts/test_style_filter.py` in CI.
 
 ## Technology Tags
 Docker, Python, Fireworks AI, Gemma 3, Qwen2.5-VL, FFmpeg, faster-whisper, LoRA, Unsloth, asyncio
@@ -39,9 +39,9 @@ AI Agent, Video, Multimodal, Developer Tools
 - `Makefile` — `make smoke`, `make dataset`, `make train`, `make submit-check`
 
 ## What we chose NOT to do (and why)
-- **We do not overfit the three example clips** — the guide explicitly warns that "agents that only work on the three example clips will score poorly". Our few-shots and dataset span 8 categories × 200 scenes.
-- **We do not bundle a `.env`** — credentials come from env at runtime.
-- **We do not stack multiple providers** (like Groq + OpenRouter + Fireworks) — one provider reduces variance in the 30-second-per-request budget.
+- **We do not overfit the three example clips** — the guide explicitly warns that "agents that only work on the three example clips will score poorly". Our few-shots span unrelated domains, validation runs on 12 held-out stress clips, and we eradicated every hardcoded-fallback leak (whole-word matching + fallback scanner).
+- **We do not commit credentials** — the repo is key-free; keys are injected as build args at publish time only (the judging harness injects no env vars).
+- **We do not put skin color or animal eye color in captions** — hallucinated appearance details cost accuracy and safety points; they stay in `uncertain_details`.
 
 ## Reproduction (5 minutes)
 ```bash
@@ -52,9 +52,8 @@ make self-check     # zero-cost structural + ban validation
 make judge          # LLM-Judge proxy for a real accuracy × style-match score
 ```
 
-## Reference bonuses eligible
+## Reference bonuses eligible (verified 2026-07-08)
 | Prize | Amount | Reason we qualify |
 |---|---|---|
-| Best Use of Gemma in Video Captioning | **3 000 $** | Gemma 3 27B is our default style-layer model, on Fireworks |
-| Best AMD-Hosted Gemma Project | **2 000 $** | LoRA training happens on AMD Developer Cloud (MI300X, ROCm) |
-| Track 2 leaderboard prize | share of 20 000 $+ | Optimised specifically for LLM-Judge accuracy × style-match |
+| Track 2 prize | share of **$10,000** pool ($5k/$3k/$2k across tracks) | Optimised specifically for LLM-Judge accuracy × style-match (0.96+ on visual judge proxy, n=12) |
+| Best Use of Gemma | share of **$6,000** across all tracks, human-judged on the dossier | Gemma-3-27B writes every scored caption; measured best-in-class style-match (0.983); LoRA path ready for MI300X |

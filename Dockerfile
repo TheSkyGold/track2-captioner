@@ -27,9 +27,29 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
-# The harness mounts /input and /output at runtime.
-# Do NOT bake any secrets in — read them from env at runtime.
-ENV PYTHONPATH=/app
+# The harness mounts /input and /output at runtime and injects NO env vars,
+# so the submission profile is pinned here. Non-secret config is plain ENV.
+ENV PYTHONPATH=/app \
+    PROVIDER_ORDER=openrouter,groq,fireworks \
+    DESCRIBE_PROVIDER_ORDER=openrouter,groq,fireworks \
+    STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
+    OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
+    OPENROUTER_STYLE_MODEL=google/gemma-3-27b-it \
+    NUM_FRAMES=10 \
+    FRAME_MAX_EDGE=896 \
+    DESCRIBE_MAX_TOKENS=1300 \
+    STYLE_MAX_TOKENS=180 \
+    MAX_CONCURRENCY=3 \
+    PER_TASK_TIMEOUT_S=75
+
+# API keys arrive as build args at publish time only (CI secrets) — the repo
+# and default builds stay key-free; without keys the image degrades safely.
+ARG OPENROUTER_API_KEY=""
+ARG GROQ_API_KEY=""
+ARG FIREWORKS_API_KEY=""
+ENV OPENROUTER_API_KEY=${OPENROUTER_API_KEY} \
+    GROQ_API_KEY=${GROQ_API_KEY} \
+    FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
 
 # Sanity: must start and be ready in < 60s. Keep the container thin.
 CMD ["python", "-u", "-m", "app.main"]

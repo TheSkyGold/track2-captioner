@@ -16,6 +16,8 @@ CLEAN = [
     # substring regressions: 'rat' in laboratory/rather/operation, 'thin' in within
     "A gloved hand transfers green liquid into a multi-well plate within a laboratory.",
     "One appreciates the rather decorative pavement and the orderly vehicle storage on display.",
+    # 'thin' as an object adjective must pass (branches, cables, strips)
+    "A ginger kitten advances through green bushes and thin branches toward the camera.",
 ]
 
 # 'race condition' is legit tech humour — bare 'race' must not trip the
