@@ -348,7 +348,7 @@ Quality target:
   - Tie the tech joke to a visible action or object, not a generic software line.
   - MANDATORY (captions failing this are rejected): include at least one word
     from exactly this set: API, queue, latency, scheduler, cache, deploy,
-    production, commit, runtime, server, logs, staging, rollback.
+    production, commit, runtime, server, logs, staging, rollback, pipeline.
     Using these as metaphors for visible things is always allowed — the earlier
     ban only forbids CLAIMING code/screens are visible when they are not.
   - Include at least two concrete scene anchors before or inside the tech metaphor.

@@ -13,7 +13,14 @@ CLEAN = [
     "A mesmerizing display of urban efficiency, conveniently sped up to avoid experiencing it.",
     "The cat inspects it carefully before deciding the leaf is beneath its notice.",
     "She loves it here, where the afternoon light does all the work.",
+    # substring regressions: 'rat' in laboratory/rather/operation, 'thin' in within
+    "A gloved hand transfers green liquid into a multi-well plate within a laboratory.",
+    "One appreciates the rather decorative pavement and the orderly vehicle storage on display.",
 ]
+
+# 'race condition' is legit tech humour — bare 'race' must not trip the
+# sensitive-appearance filter (racial/ethnicity still do).
+RACE_OK = "The hand lifted the cup, triggering a race condition between latte art and the saucer."
 
 # Real tech-humour must still be detected as tech.
 TECH = [
@@ -30,6 +37,7 @@ def demo() -> None:
     for cap in TECH:
         assert _has_tech_jargon(cap), f"missed real tech reference: {cap!r}"
         assert caption_passes_style_filter("humorous_tech", cap), f"tech rejected: {cap!r}"
+    assert caption_passes_style_filter("humorous_tech", RACE_OK), f"race-condition rejected: {RACE_OK!r}"
     # Regression: substring matching once made 'cat' match 'located', firing
     # the kitten fallback on an earth-from-space clip. Whole words only.
     space_facts = {

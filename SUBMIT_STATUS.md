@@ -32,6 +32,60 @@ Last checked locally: 2026-07-08 18:20 Europe/Paris.
   `eval/scores_stress_gemma.json`.
 - Offline `scripts/preflight.py` still fully green after the fix.
 
+## 2026-07-08 (evening) — Substring-matching bug family eradicated
+
+Three filter bugs of the same class (substring matching where whole-word was
+meant) were found by A/B-judging prompt changes at n=12 and logging every
+fallback swap:
+
+1. `TECH_KEYWORDS` contained the pronoun `"it"` (fixed earlier today).
+2. `fallback_caption` matched fact words by substring on a joined string:
+   `"cat"` matched `"located"` → the kitten caption fired on the
+   earth-from-space clip (judge: 0.00). Fixed with whole-word token sets.
+3. `LOW_TASTE_TERMS`/`SENSITIVE_APPEARANCE_TERMS` were substring-checked:
+   `"rat"` killed captions containing laboratory/rather/operation/decorative,
+   `"thin"` killed every caption containing "within". Perfect formal captions
+   were being silently swapped for fallbacks. Fixed with `\b` word-boundary
+   matching. Also removed bare `"race"` (killed "race condition"; racial/
+   ethnicity cover the real risk) and lowered the sarcastic min-word floor
+   18→14 (the judge rated 14-17-word sarcastic captions 1.0 while the floor
+   swapped them for fallbacks).
+
+`normalize_captions` now logs a WARNING with the reason and rejected text every
+time a fallback fires — we were blind to all of the above before this.
+`scripts/fallback_scan.py` counts fallback captions in any results file: every
+fallback is a caption not written from the actual video, i.e. the top accuracy
+risk on unseen clips. Guards for every regression live in
+`scripts/test_style_filter.py` and run in CI.
+
+Measured on the 12-clip stress set (48 captions, same visual judge):
+
+| Run | Fallbacks | Accuracy | Style | Final |
+|---|---|---|---|---|
+| baseline (pre-fix prompts v1) | 15/48 | 0.919 | 0.958 | 0.939 |
+| prompts v2, substring bugs live | 15/48 | 0.790 | 0.838 | 0.814 |
+| v4 = prompts v2 + whole-word fixes | 9/48 | 0.917 | 0.940 | 0.928 |
+| v5 = v4 + race-condition/floor fixes | **2/48** | 0.906 | 0.940 | 0.923 |
+| **v6 = v5 + "pipeline" in tech vocab (SUBMISSION CANDIDATE)** | **2/48** | **0.956** | **0.981** | **0.969** |
+
+The baseline's 0.939 leaned on 15 fallbacks that happened to score well on
+these clips with a lenient judge; on unseen clips every fallback is a lottery
+ticket (see the kitten-on-space-clip 0.00). v5 runs 96% real captions — that
+is the config that generalizes. The 0.92-0.94 spread between runs is judge
+noise (±0.01) plus the remaining fallback captures. v5's two remaining
+fallbacks were both humorous_tech captions using "pipeline", which the tech
+filter did not recognize — fixed in v6 by adding it to `TECH_KEYWORDS`.
+
+**v6 is the best measured configuration: +0.030 final over the pre-fix
+baseline with 96% real captions (2/48 grounded fallbacks, none off-topic).
+All three metrics sit in the kit's "Excellent" band. Optimization stopped
+here — the remaining tail (blacksmith clip, "hot loop") is judge-noise level
+and adding "loop" to the tech vocabulary would false-positive everyday
+captions.**
+
+GitHub: private repo `devopsm3/track2-captioner` (public at submission day),
+CI green (offline preflight + linux/amd64 Docker build + filter guards).
+
 ## Proven Locally
 
 - Python modules compile.

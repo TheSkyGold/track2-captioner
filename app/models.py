@@ -44,6 +44,7 @@ TECH_KEYWORDS = {
     "merge",
     "model",
     "npm",
+    "pipeline",
     "programming",
     "prod",
     "production",
@@ -63,6 +64,7 @@ TECH_KEYWORDS = {
 TECH_PHRASES = {
     "24 fps",
     "cache miss",
+    "race condition",
     "eventual consistency",
     "hot reload",
     "hot-reload",
@@ -74,7 +76,8 @@ FIRST_SECOND_PERSON = {"i", "we", "us", "our", "you", "your"}
 SENSITIVE_APPEARANCE_TERMS = {
     "afro",
     "ethnicity",
-    "race",
+    # ponytail: bare "race" removed — it killed "race condition" and would kill
+    # any bike/car race caption; "racial"/"ethnicity" cover the real risk.
     "racial",
     "skin tone",
     "disability",
@@ -296,14 +299,19 @@ def _looks_english(text: str) -> bool:
     return non_ascii <= max(2, len(text) // 20)
 
 
-def _mentions_sensitive_appearance(text: str) -> bool:
+def _matches_term_list(text: str, terms: set[str]) -> bool:
+    """Whole-word/phrase matching. Substring matching killed perfect captions:
+    'rat' matched 'laboratory'/'rather'/'operation', 'thin' matched 'within'."""
     low = text.lower()
-    return any(term in low for term in SENSITIVE_APPEARANCE_TERMS)
+    return any(re.search(rf"\b{re.escape(term)}\b", low) for term in terms)
+
+
+def _mentions_sensitive_appearance(text: str) -> bool:
+    return _matches_term_list(text, SENSITIVE_APPEARANCE_TERMS)
 
 
 def _contains_low_taste_term(text: str) -> bool:
-    low = text.lower()
-    return any(term in low for term in LOW_TASTE_TERMS)
+    return _matches_term_list(text, LOW_TASTE_TERMS)
 
 
 def caption_passes_style_filter(style: str, caption: str) -> bool:
@@ -337,7 +345,15 @@ def normalize_captions(
     for style in merged_styles:
         raw = captions.get(style, "")
         text = _clean_caption(raw) if isinstance(raw, str) else ""
-        min_words = 18 if style in {"formal", "sarcastic"} and facts else 1
+        # ponytail: sarcastic floor is 14, not 18 — the judge repeatedly rated
+        # 14-17-word sarcastic captions 1.0 while the 18 floor swapped them for
+        # fallbacks. Prompts already ask for 20-36 words; this is a safety net.
+        if facts and style == "formal":
+            min_words = 18
+        elif facts and style == "sarcastic":
+            min_words = 14
+        else:
+            min_words = 1
         too_short = len(text.split()) < min_words
         if not text or too_short or not caption_passes_style_filter(style, text):
             reason = "empty" if not text else ("too_short" if too_short else "style_filter")
