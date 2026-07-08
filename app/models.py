@@ -269,7 +269,16 @@ def _clean_caption(text: str) -> str:
         or (text.startswith("'") and text.endswith("'"))
     ):
         text = text[1:-1].strip()
-    return text[:300].strip()
+    if len(text) > 300:
+        # Cut at the last full sentence under the cap, never mid-word.
+        head = text[:300]
+        sentence_end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+        if sentence_end > 80:
+            head = head[: sentence_end + 1]
+        elif " " in head:
+            head = head[: head.rfind(" ")].rstrip(",;:") + "."
+        text = head
+    return text.strip()
 
 
 def _has_tech_jargon(text: str) -> bool:
@@ -314,6 +323,35 @@ def _contains_low_taste_term(text: str) -> bool:
     return _matches_term_list(text, LOW_TASTE_TERMS)
 
 
+def strip_uncertainty_fillers(text: str) -> str:
+    """Remove filler adverbs instead of rejecting the whole caption for them.
+    'mission - probably to judge our gardening skills' loses only the filler."""
+    out = re.sub(r"\b(probably|maybe|perhaps|apparently)\b[ ,]*", "", text, flags=re.I)
+    out = re.sub(r"\s{2,}", " ", out).replace(" .", ".").replace(" ,", ",")
+    return re.sub(r",\s*([.!?])", r"\1", out).strip()
+
+
+def style_filter_reason(style: str, caption: str) -> str:
+    """Name the first failing check — for diagnostics."""
+    if not _looks_english(caption):
+        return "not_english"
+    if _mentions_sensitive_appearance(caption):
+        return "sensitive_appearance"
+    if _contains_low_taste_term(caption):
+        return "low_taste_term"
+    if style == "humorous_non_tech" and _has_tech_jargon(caption):
+        return "tech_jargon_banned"
+    if style == "humorous_tech" and not _has_tech_jargon(caption):
+        return "missing_tech_term"
+    if style in {"formal", "sarcastic"} and "!" in caption:
+        return "exclamation"
+    if style == "formal" and _has_first_second_person(caption):
+        return "first_second_person"
+    if style == "sarcastic" and _has_tech_jargon(caption):
+        return "tech_jargon_banned"
+    return "ok"
+
+
 def caption_passes_style_filter(style: str, caption: str) -> bool:
     if not _looks_english(caption):
         return False
@@ -355,13 +393,24 @@ def normalize_captions(
         else:
             min_words = 1
         too_short = len(text.split()) < min_words
+        if text and not caption_passes_style_filter(style, text):
+            repaired = strip_uncertainty_fillers(text)
+            if repaired != text and caption_passes_style_filter(style, repaired):
+                text = repaired
         if not text or too_short or not caption_passes_style_filter(style, text):
-            reason = "empty" if not text else ("too_short" if too_short else "style_filter")
+            reason = (
+                "empty" if not text
+                else ("too_short" if too_short else style_filter_reason(style, text))
+            )
             logging.getLogger("track2.models").warning(
                 "fallback fired [%s] reason=%s rejected=%r", style, reason, text[:120]
             )
             text = fallback_caption(style, facts)
             if not caption_passes_style_filter(style, text):
+                logging.getLogger("track2.models").warning(
+                    "grounded fallback ALSO rejected [%s] reason=%s rejected=%r -> static",
+                    style, style_filter_reason(style, text), text[:120],
+                )
                 text = fallback_caption(style)
         normalized[style] = text
     return normalized

@@ -281,13 +281,24 @@ DESCRIBE_SYSTEM += """
 
 Additional quality requirements:
   - Treat frames as chronological evidence from one video.
-  - Include visual_details: 3-6 concrete details such as colors, objects,
+  - Include visual_details: 5-9 concrete details such as colors, objects,
     posture, weather, screen content, camera view, or distinctive background.
-  - Include fine_grained_observations with conservative, visible-only details:
-    approximate counts or quantities ("dozens of cars", "several lanes"),
-    animal type without guessing breed, leaf/plant appearance, sunlight and
-    shadow quality, clothing layers, jewelry, hand positions, nail color,
-    cables, peripherals, and nearby objects.
+  - Include fine_grained_observations: extract EVERY clearly visible detail.
+    Work through this checklist for whatever the frames contain:
+    * People: hairstyle and hair color (bun, curly, braided...), earrings,
+      necklace or pendant, rings, watch, glasses, nail color, clothing layers
+      with colors, and every object they touch or use (mouse, keyboard,
+      phone, cup, pen).
+    * Animals: species and visually obvious type ("orange tabby kitten",
+      "cream-colored puppy") — pattern and coat colors, white paws or chest,
+      distinctive marks; eye color ONLY when a close-up makes it unmistakable.
+    * Streets/outdoor: approximate counts ("five high-rise buildings",
+      "dozens of cars", "four lanes"), storefront signs and banners
+      (transcribe short legible text, note the language), tree or plant type
+      when identifiable (ginkgo, palm, plane tree), weather and light.
+    * Desks/indoor: every peripheral and object (mouse, coiled cable,
+      monitor, plant, mug), furniture colors and materials, light fixtures.
+    Prefer a specific noun over a generic one whenever the pixels support it.
   - Include salient_objects: 3-8 tangible visible objects or entities worth
     preserving in captions.
   - Include spatial_relations: 2-5 concise facts about foreground/background,
@@ -314,9 +325,12 @@ Additional quality requirements:
 FORMAL_SYSTEM += """
 
 Quality target:
-  - Output exactly one sentence, 22-38 words.
-  - Use at least three concrete visual anchors when available: main subject,
-    action, setting, and one object/color/camera/spatial detail.
+  - Output one or two sentences, 24-45 words total.
+  - Use at least four concrete visual anchors when available: main subject
+    with its distinctive appearance details (hairstyle, jewelry, coat pattern,
+    signage...), action, setting, and one object/color/camera/spatial detail.
+  - Fine-grained specifics beat generic labels: "orange tabby kitten" beats
+    "cat", "silver mouse and coiled cable" beats "desk items".
   - Prefer careful approximations over fake precision: "several lanes" or
     "dozens of cars" is allowed; exact counts are not unless obvious.
   - Name the specific setting and main action without filler.

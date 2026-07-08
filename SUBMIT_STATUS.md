@@ -78,10 +78,37 @@ filter did not recognize — fixed in v6 by adding it to `TECH_KEYWORDS`.
 
 **v6 is the best measured configuration: +0.030 final over the pre-fix
 baseline with 96% real captions (2/48 grounded fallbacks, none off-topic).
-All three metrics sit in the kit's "Excellent" band. Optimization stopped
-here — the remaining tail (blacksmith clip, "hot loop") is judge-noise level
-and adding "loop" to the tech vocabulary would false-positive everyday
-captions.**
+All three metrics sit in the kit's "Excellent" band.**
+
+## 2026-07-08 (night) — Max-detail upgrade ("Qwen3-VL-235B sees, Gemma writes")
+
+Per the detail push (mouse, pendant, hairstyle, cat type, tree species,
+building counts must appear in captions):
+
+- Describe VLM upgraded 8B → **qwen/qwen3-vl-235b-a22b-instruct**, 10 frames
+  at 896px, 1300 describe tokens.
+- Describe prompt now carries a per-subject-type detail checklist (people:
+  hairstyle/jewelry/nails/peripherals; animals: species+coat "orange tabby";
+  streets: counts/signage+language/tree species; desks: every object).
+- Formal style: 4+ anchors, 24-45 words, "specific noun beats generic".
+- New repairs instead of rejections: uncertainty fillers ("probably") are
+  stripped; >300-char captions are cut at sentence boundaries (no more
+  mid-word truncation); second-level fallback rejections are now logged.
+- Skin color and animal eye color are deliberately captured only as
+  uncertain_details: judge safety/hallucination risk outweighs detail gain.
+
+Measured:
+| Run | Fallbacks | Accuracy | Style | Final |
+|---|---|---|---|---|
+| demo 3 clips (v9) | 1/12 | **0.975** | 0.950 | 0.963 |
+| stress 12 clips (v9) | 3/48 | 0.942 | **0.983** | 0.963 |
+
+v9 vs v6 finals (0.963 vs 0.969) are within judge noise; v9 captions carry
+far more concrete visual detail (ginkgo trees, orange tabby, cross necklace,
+black mouse, high bun), which both the official rubric ("useful concrete
+detail") and the product story reward. **v9 is the submission candidate.**
+Worst clip wall time 60s; 12 clips ≈ 6 min at concurrency 2 — inside the
+10-min budget with margin.
 
 GitHub: private repo `devopsm3/track2-captioner` (public at submission day),
 CI green (offline preflight + linux/amd64 Docker build + filter guards).
