@@ -1,0 +1,110 @@
+[
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the visible elements in the frames and uses a formal, objective tone without jargon or humor.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v1",
+    "style": "formal",
+    "caption": "A static wide-angle time-lapse shows dozens of cars moving through a broad multi-lane urban intersection lined with golden-yellow trees, high-rise apartment buildings, traffic lights, and colored banners along the right sidewalk."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the time-lapse, golden trees, and apartment towers, and delivers the sarcastic tone with dry irony and understated mockery as requested.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v1",
+    "style": "sarcastic",
+    "caption": "A wide time-lapse watches dozens of cars blur through golden tree-lined lanes, while apartment towers and cheerful sidewalk banners do more for the mood than traffic ever will."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the traffic scene with tech metaphors ('packets stuck in a scenic network queue') and delivers a punchline ('sidewalk banners acting as release notes'), perfectly matching the humorous_tech style.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v1",
+    "style": "humorous_tech",
+    "caption": "Dozens of cars stream between golden trees and apartment towers like packets stuck in a scenic network queue, with the sidewalk banners acting as release notes."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the busy intersection, golden trees, and apartment buildings, and delivers the humor with warmth and everyday wit without any tech jargon.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v1",
+    "style": "humorous_non_tech",
+    "caption": "Dozens of cars hurry through the city intersection while golden trees, high-rise apartments, and bright sidewalk banners make the commute look better dressed than it feels."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the scene with specific visual details and adheres strictly to a formal, objective tone.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v2",
+    "style": "formal",
+    "caption": "A fluffy orange kitten walks steadily toward the camera across dry dirt under dappled sunlight, framed by green oval leaves, thin branches, and tree trunks."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the kitten's fluffy orange appearance, its movement through greenery, and its focused expression, while perfectly matching the sarcastic tone with dry, ironic phrasing.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v2",
+    "style": "sarcastic",
+    "caption": "A fluffy orange kitten marches through green leaves and thin branches, conducting a very serious inspection of dirt, sunlight, and personal space."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the kitten's movement and environment while humorously framing it as a tech deployment with programming terms like 'zero rollback' and 'paw-level routing', matching the humorous_tech style perfectly.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v2",
+    "style": "humorous_tech",
+    "caption": "The orange kitten deploys a forward-facing crawl through dappled sunlight and leafy branches, testing dirt-path navigation with zero rollback and confident paw-level routing."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the fluffy orange kitten walking through a leafy tunnel and matches the humorous, warm, non-tech style with personification and everyday humor.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v2",
+    "style": "humorous_non_tech",
+    "caption": "That fluffy orange kitten walks through the leafy tunnel like it owns the dry dirt path, with every sunlit branch politely making room."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes all visible elements in the frames and uses a formal, objective, third-person tone without jargon or humor.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v3",
+    "style": "formal",
+    "caption": "A woman in a light beige jacket and orange top types at a white office desk, wearing a small pendant necklace, with pale pink nails near the keyboard, a black mouse, loose cables, round ceiling lights, and a green plant behind her."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes all visible elements in the frames and uses a dry, ironic tone consistent with sarcastic style without overstatement or jargon.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v3",
+    "style": "sarcastic",
+    "caption": "A woman in a beige jacket types with pale pink nails at a white desk, while a dark monitor, loose cables, pendant necklace, and green plant provide office drama."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the scene with vivid detail and delivers a humorous tech pun by personifying the mouse, cables, and plant as input queue members, fitting the 'humorous_tech' style perfectly.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v3",
+    "style": "humorous_tech",
+    "caption": "At the white desk, the focused woman routes pale pink nails across the keyboard while the black mouse, loose cables, and green plant join the input queue."
+  },
+  {
+    "accuracy": 1.0,
+    "style_match": 1.0,
+    "reason": "The caption accurately describes the scene with vivid, humorous detail (pale pink nails, mouse as a 'support team') and matches the requested warm, non-tech style perfectly.",
+    "judge_model": "openrouter:qwen/qwen3-vl-8b-instruct",
+    "task_id": "v3",
+    "style": "humorous_non_tech",
+    "caption": "At the white desk, she types with focused calm, pale pink nails near the keyboard, while the black mouse, trailing cables, pendant, and green plant quietly form her support team."
+  }
+]

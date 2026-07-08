@@ -1,0 +1,915 @@
+"""
+Two-stage pipeline:
+
+    1. DESCRIBE — VLM reads 8 sampled frames + audio-transcript hint → scene facts JSON.
+    2. STYLE    — 4 parallel LLM calls (one per requested style), grounded in the facts.
+
+This split lets you optimise the two scoring axes independently:
+    - Caption accuracy is set by stage 1 (what's in the video).
+    - Style match is set by stage 2 (tone, per-style system prompts + few-shots).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import httpx
+from dotenv import load_dotenv
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    retry_if_exception_type,
+)
+
+from app.models import caption_passes_style_filter, fallback_caption, normalize_captions
+from app.prompts import DESCRIBE_SYSTEM, DESCRIBE_USER, STYLE_PROMPTS
+
+load_dotenv()
+
+log = logging.getLogger("track2.pipeline")
+
+
+# =============================================================================
+# Config — every knob is env-driven so the same image serves dev + prod.
+# =============================================================================
+FIREWORKS_BASE_URL = os.environ.get(
+    "FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"
+)
+FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+PROVIDER_ORDER = os.environ.get("PROVIDER_ORDER", "groq,fireworks,openrouter")
+DESCRIBE_PROVIDER_ORDER = os.environ.get("DESCRIBE_PROVIDER_ORDER", PROVIDER_ORDER)
+STYLE_PROVIDER_ORDER = os.environ.get("STYLE_PROVIDER_ORDER", PROVIDER_ORDER)
+
+# Vision model (multimodal). Qwen2.5-VL 7B on Fireworks is the recommended default.
+VLM_MODEL = os.environ.get(
+    "VLM_MODEL", "accounts/fireworks/models/qwen2p5-vl-7b-instruct"
+)
+VLM_FALLBACK_MODELS = os.environ.get("VLM_FALLBACK_MODELS", "")
+DIRECT_VIDEO_MODEL = os.environ.get("DIRECT_VIDEO_MODEL", "")
+GROQ_VISION_MODEL = os.environ.get(
+    "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+)
+GROQ_MAX_IMAGES = int(os.environ.get("GROQ_MAX_IMAGES", "5"))
+OPENROUTER_VLM_MODEL = os.environ.get(
+    "OPENROUTER_VLM_MODEL", "qwen/qwen3-vl-8b-instruct"
+)
+# Text model for the 4 style rewrites. Gemma 3 27B → eligible for the Gemma bonus.
+STYLE_MODEL = os.environ.get(
+    "STYLE_MODEL", "accounts/fireworks/models/gemma-3-27b-it"
+)
+STYLE_LORA = os.environ.get("STYLE_LORA", "")
+STYLE_FALLBACK_MODELS = os.environ.get("STYLE_FALLBACK_MODELS", "")
+GROQ_STYLE_MODEL = os.environ.get("GROQ_STYLE_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_STYLE_MODEL = os.environ.get("OPENROUTER_STYLE_MODEL", "qwen/qwen3-vl-8b-instruct")
+
+NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "8"))
+FRAME_MAX_EDGE = int(os.environ.get("FRAME_MAX_EDGE", "720"))
+DIRECT_VIDEO_MAX_SECONDS = int(os.environ.get("DIRECT_VIDEO_MAX_SECONDS", "60"))
+SCENE_DETECT_ENABLED = os.environ.get("SCENE_DETECT_ENABLED", "1") != "0"
+SCENE_THRESHOLD = float(os.environ.get("SCENE_THRESHOLD", "0.35"))
+AUDIO_TRANSCRIBE_ENABLED = os.environ.get("AUDIO_TRANSCRIBE_ENABLED", "1") != "0"
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "whisper-large-v3-turbo")
+GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "20"))
+DESCRIBE_MAX_TOKENS = int(os.environ.get("DESCRIBE_MAX_TOKENS", "700"))
+STYLE_MAX_TOKENS = int(os.environ.get("STYLE_MAX_TOKENS", "140"))
+EVIDENCE_LOCK_ENABLED = os.environ.get("EVIDENCE_LOCK_ENABLED", "0") != "0"
+STYLE_CANDIDATES = max(1, int(os.environ.get("STYLE_CANDIDATES", "2")))
+STYLE_REPAIR_ENABLED = os.environ.get("STYLE_REPAIR_ENABLED", "1") != "0"
+
+
+# =============================================================================
+# Public entry
+# =============================================================================
+async def caption_one_video(video_url: str, styles: list[str]) -> dict[str, str]:
+    """Full pipeline for one clip. Returns {style: caption_text}."""
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        video_path = await _download(video_url, workdir / "clip.mp4")
+        facts = await _direct_video_facts(video_path, workdir)
+        if facts:
+            captions = await _style_all(facts, styles)
+            normalized = normalize_captions(captions, styles, facts)
+            if EVIDENCE_LOCK_ENABLED:
+                normalized = await _repair_with_sibling_context(normalized, facts, styles)
+            return normalize_captions(normalized, styles, facts)
+        frames = _extract_keyframes(video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE)
+        # Audio transcript is optional but strongly boosts humorous_tech / non_tech
+        # scores (jokes live in the voice track). Left as a hook — enable Whisper
+        # if you ship it in the image.
+        transcript_hint = await _transcript_hint(video_path, workdir)
+
+        facts = await _describe(frames, transcript_hint)
+        captions = await _style_all(facts, styles)
+        normalized = normalize_captions(captions, styles, facts)
+        if EVIDENCE_LOCK_ENABLED:
+            normalized = await _repair_with_sibling_context(normalized, facts, styles)
+        return normalize_captions(normalized, styles, facts)
+
+
+# =============================================================================
+# Step 0 — fetch the video (harness may point at gs:// public URLs)
+# =============================================================================
+async def _download(url: str, dst: Path) -> Path:
+    return await _download_with_retry(url, dst)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential_jitter(initial=0.5, max=3.0),
+    retry=retry_if_exception_type(httpx.HTTPError),
+    reraise=True,
+)
+async def _download_with_retry(url: str, dst: Path) -> Path:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as c:
+        async with c.stream("GET", url) as r:
+            r.raise_for_status()
+            with dst.open("wb") as f:
+                async for chunk in r.aiter_bytes():
+                    f.write(chunk)
+    return dst
+
+
+def _model_candidates(primary: str, fallbacks: str) -> list[str]:
+    models = [primary, *(m.strip() for m in fallbacks.split(",") if m.strip())]
+    return list(dict.fromkeys(models))
+
+
+def _provider_order(kind: str = "all") -> list[str]:
+    order = PROVIDER_ORDER
+    if kind == "describe":
+        order = DESCRIBE_PROVIDER_ORDER
+    elif kind == "style":
+        order = STYLE_PROVIDER_ORDER
+    return [p.strip().lower() for p in order.split(",") if p.strip()]
+
+
+def _provider_endpoint(provider: str, *, style: bool = False) -> tuple[str, str, list[str]]:
+    if provider == "groq" and GROQ_API_KEY:
+        model = GROQ_STYLE_MODEL if style else GROQ_VISION_MODEL
+        return GROQ_BASE_URL, GROQ_API_KEY, [model]
+    if provider == "fireworks" and FIREWORKS_API_KEY:
+        if style:
+            primary = STYLE_LORA or STYLE_MODEL
+            models = _model_candidates(primary, STYLE_FALLBACK_MODELS)
+        else:
+            models = _model_candidates(VLM_MODEL, VLM_FALLBACK_MODELS)
+        return FIREWORKS_BASE_URL, FIREWORKS_API_KEY, models
+    if provider == "openrouter" and OPENROUTER_API_KEY:
+        model = OPENROUTER_STYLE_MODEL if style else OPENROUTER_VLM_MODEL
+        return OPENROUTER_BASE_URL, OPENROUTER_API_KEY, [model]
+    return "", "", []
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) and _facts_useful(obj) else None
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    for start, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[start:])
+            if isinstance(obj, dict):
+                candidates.append(obj)
+        except json.JSONDecodeError:
+            continue
+    useful = [obj for obj in candidates if _facts_useful(obj)]
+    if useful:
+        return max(useful, key=_facts_score)
+    return max(candidates, key=_facts_score) if candidates else None
+
+
+def _facts_score(facts: dict[str, Any]) -> int:
+    score = 0
+    for key in ("summary", "setting", "camera", "temporal_progression"):
+        value = facts.get(key)
+        if isinstance(value, str) and value.strip():
+            score += len(value.split())
+    for key in (
+        "subjects",
+        "actions",
+        "visual_details",
+        "fine_grained_observations",
+        "salient_objects",
+        "spatial_relations",
+    ):
+        value = facts.get(key)
+        if isinstance(value, list):
+            score += sum(1 for item in value if str(item).strip())
+    return score
+
+
+def _facts_useful(facts: dict[str, Any]) -> bool:
+    return _facts_score(facts) >= 8 and bool(str(facts.get("summary", "")).strip())
+
+
+def _extract_final_caption(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    for marker in ("Final caption:", "Caption:", "Final:"):
+        if marker.lower() in cleaned.lower():
+            idx = cleaned.lower().rfind(marker.lower())
+            cleaned = cleaned[idx + len(marker) :].strip()
+            break
+    lines = [line.strip(" -\t") for line in cleaned.splitlines() if line.strip()]
+    if len(lines) > 1:
+        cleaned = lines[-1]
+    return cleaned.strip()
+
+
+async def _direct_video_facts(video_path: Path, workdir: Path) -> dict[str, Any] | None:
+    if not DIRECT_VIDEO_MODEL or not FIREWORKS_API_KEY:
+        return None
+    try:
+        video_b64, audio_b64 = _preprocess_direct_video(video_path, workdir)
+        content: list[dict[str, Any]] = [
+            {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
+            {"type": "audio_url", "audio_url": {"url": f"data:audio/ogg;base64,{audio_b64}"}},
+            {"type": "text", "text": DESCRIBE_USER.format(transcript_hint="(audio attached)")},
+        ]
+        payload = {
+            "model": DIRECT_VIDEO_MODEL,
+            "messages": [
+                {"role": "system", "content": DESCRIBE_SYSTEM},
+                {"role": "user", "content": content},
+            ],
+            "temperature": 0.2,
+            "max_tokens": DESCRIBE_MAX_TOKENS,
+            "response_format": {"type": "json_object"},
+        }
+        text = await _chat_content(payload)
+        return json.loads(text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("direct video describe failed: %s", e)
+        return None
+
+
+def _preprocess_direct_video(video_path: Path, workdir: Path) -> tuple[str, str]:
+    processed_video = workdir / "direct_video.mp4"
+    processed_audio = workdir / "direct_audio.ogg"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-y", "-i", str(video_path),
+            "-t", str(DIRECT_VIDEO_MAX_SECONDS),
+            "-vf", "fps=1,scale=-1:360",
+            "-c:v", "libx264", "-preset", "fast",
+            "-an", str(processed_video),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-y", "-i", str(video_path),
+            "-t", str(DIRECT_VIDEO_MAX_SECONDS),
+            "-vn", "-c:a", "libopus", "-b:a", "24k",
+            "-ar", "16000", "-ac", "1",
+            str(processed_audio),
+        ],
+        check=True,
+    )
+    total_size = processed_video.stat().st_size + processed_audio.stat().st_size
+    if total_size > 7_500_000:
+        # ponytail: Fireworks recommends <10MB base64 payload; 7.5MB raw keeps margin.
+        raise ValueError(f"direct video payload too large before base64: {total_size} bytes")
+    return (
+        base64.b64encode(processed_video.read_bytes()).decode("ascii"),
+        base64.b64encode(processed_audio.read_bytes()).decode("ascii"),
+    )
+
+
+async def _transcript_hint(video_path: Path, workdir: Path) -> str:
+    if not AUDIO_TRANSCRIBE_ENABLED or not GROQ_API_KEY:
+        return ""
+    try:
+        if not _has_audio_stream(video_path):
+            return ""
+        audio_path = _extract_audio(video_path, workdir / "audio.wav")
+        return await _transcribe_audio(audio_path)
+    except Exception as e:  # noqa: BLE001
+        log.warning("audio transcription failed: %s", e)
+        return ""
+
+
+def _has_audio_stream(video_path: Path) -> bool:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                str(video_path),
+            ],
+            text=True,
+        ).strip()
+        return bool(out)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _extract_audio(video_path: Path, out_path: Path) -> Path:
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-y", "-i", str(video_path),
+            "-vn", "-ac", "1", "-ar", "16000",
+            str(out_path),
+        ],
+        check=True,
+    )
+    return out_path
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential_jitter(initial=0.5, max=3.0),
+    retry=retry_if_exception_type(httpx.HTTPError),
+    reraise=True,
+)
+async def _transcribe_audio(audio_path: Path) -> str:
+    data = {"model": WHISPER_MODEL, "response_format": "json"}
+    files = {"file": (audio_path.name, audio_path.read_bytes(), "audio/wav")}
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
+        r = await c.post(
+            f"{GROQ_BASE_URL}/audio/transcriptions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            data=data,
+            files=files,
+        )
+        r.raise_for_status()
+        text = r.json().get("text", "")
+    return text.strip()[:1200]
+
+
+# =============================================================================
+# Step 1 — extract N frames uniformly from the clip
+# =============================================================================
+def _extract_keyframes(video: Path, workdir: Path, n: int, max_edge: int) -> list[Path]:
+    """Uniform sampling via ffmpeg — cheap, deterministic, works for 30s-2min clips."""
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found in PATH")
+
+    duration = _ffprobe_duration(video)
+    if duration <= 0:
+        duration = 60.0  # fallback assumption
+
+    hybrid_paths: list[Path] = []
+    if SCENE_DETECT_ENABLED:
+        try:
+            hybrid_paths.extend(
+                _extract_scene_frames(
+                    video=video,
+                    workdir=workdir,
+                    max_count=max(1, n // 2),
+                    max_edge=max_edge,
+                    threshold=SCENE_THRESHOLD,
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("scene-detect frame extraction failed: %s", e)
+
+    remaining = n - len(hybrid_paths)
+    if remaining > 0:
+        hybrid_paths.extend(
+            _extract_uniform_frames(
+                video=video,
+                workdir=workdir,
+                n=remaining,
+                max_edge=max_edge,
+                duration=duration,
+                prefix="u",
+            )
+        )
+    return hybrid_paths[:n]
+
+
+def _extract_scene_frames(
+    video: Path,
+    workdir: Path,
+    max_count: int,
+    max_edge: int,
+    threshold: float,
+) -> list[Path]:
+    scene_dir = workdir / "scene"
+    scene_dir.mkdir(exist_ok=True)
+    out_pattern = scene_dir / "s%03d.jpg"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", str(video),
+            "-vf", f"select='gt(scene\\,{threshold})',scale='min({max_edge},iw)':-2",
+            "-vsync", "vfr",
+            "-q:v", "4",
+            str(out_pattern),
+        ],
+        check=False,
+        capture_output=True,
+    )
+    return sorted(scene_dir.glob("s*.jpg"))[:max_count]
+
+
+def _extract_uniform_frames(
+    video: Path,
+    workdir: Path,
+    n: int,
+    max_edge: int,
+    duration: float,
+    prefix: str,
+) -> list[Path]:
+    step = max(duration / (n + 1), 0.1)
+    out_paths: list[Path] = []
+    for i in range(1, n + 1):
+        t = round(i * step, 3)
+        out = workdir / f"{prefix}{i:02d}.jpg"
+        subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", str(t), "-i", str(video),
+                "-frames:v", "1",
+                "-vf", f"scale='min({max_edge},iw)':-2",
+                "-q:v", "4",
+                str(out),
+            ],
+            check=True,
+        )
+        if out.exists():
+            out_paths.append(out)
+    return out_paths
+
+
+def _ffprobe_duration(video: Path) -> float:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=nw=1:nk=1",
+                str(video),
+            ],
+            text=True,
+        ).strip()
+        return float(out)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+# =============================================================================
+# Step 2 — DESCRIBE (VLM): frames + optional transcript → scene facts JSON
+# =============================================================================
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential_jitter(initial=0.5, max=3.0),
+    retry=retry_if_exception_type(httpx.HTTPError),
+    reraise=True,
+)
+async def _chat_content(payload: dict[str, Any]) -> str:
+    return await _chat_content_at(FIREWORKS_BASE_URL, FIREWORKS_API_KEY, payload)
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential_jitter(initial=0.5, max=3.0),
+    retry=retry_if_exception_type(httpx.HTTPError),
+    reraise=True,
+)
+async def _chat_content_at(base_url: str, api_key: str, payload: dict[str, Any]) -> str:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
+        r = await c.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+
+
+async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
+    """Ask the VLM for a structured JSON summary of the clip."""
+    if not any(_provider_endpoint(provider)[1] for provider in _provider_order("describe")):
+        # Degrade gracefully if no key at runtime (e.g. unit tests).
+        log.warning("no describe provider API key configured; returning fallback facts")
+        return {
+            "summary": "A short video clip with visible subjects and actions.",
+            "setting": "unknown",
+            "subjects": [],
+            "actions": [],
+            "mood": "neutral",
+            "audio_hint": "",
+            "tech_visible": False,
+        }
+
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": DESCRIBE_USER.format(
+                transcript_hint=transcript_hint or "(no transcript available)"
+            ),
+        }
+    ]
+    for fp in frames:
+        b64 = base64.b64encode(fp.read_bytes()).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            }
+        )
+
+    last_error: Exception | None = None
+    for provider in _provider_order("describe"):
+        base_url, api_key, models = _provider_endpoint(provider)
+        provider_content = content
+        if provider == "groq":
+            provider_content = [content[0], *content[1 : 1 + GROQ_MAX_IMAGES]]
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            DESCRIBE_SYSTEM
+                            + "\n\nCritical output rule: do not show reasoning, analysis, "
+                            "markdown, bullets, or drafts. The first character must be { "
+                            "and the last character must be }."
+                        ),
+                    },
+                    {"role": "user", "content": provider_content},
+                ],
+                "temperature": 0.2,
+                "max_tokens": max(DESCRIBE_MAX_TOKENS, 2200) if provider == "fireworks" else DESCRIBE_MAX_TOKENS,
+                "response_format": {"type": "json_object"},
+            }
+            try:
+                text = await _chat_content_at(base_url, api_key, payload)
+                obj = _extract_json_object(text)
+                if obj is not None and _facts_useful(obj):
+                    log.info("describe provider succeeded: %s/%s", provider, model)
+                    return obj
+                last_error = ValueError("describe returned no useful scene facts")
+                log.warning("describe model returned weak facts (%s/%s)", provider, model)
+            except (httpx.HTTPError, ValueError) as e:
+                last_error = e
+                log.warning("describe model failed (%s/%s): %s", provider, model, e)
+    if last_error:
+        log.warning("all describe providers failed; returning fallback facts")
+    return {"summary": "A short video clip with visible subjects and actions."}
+
+
+# =============================================================================
+# Step 3 — STYLE (LLM ×4 in parallel)
+# =============================================================================
+async def _style_all(facts: dict[str, Any], styles: list[str]) -> dict[str, str]:
+    tasks = [asyncio.create_task(_style_one(facts, s)) for s in styles]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    out: dict[str, str] = {}
+    for style, res in zip(styles, results):
+        out[style] = fallback_caption(style, facts) if isinstance(res, Exception) else res
+    if EVIDENCE_LOCK_ENABLED:
+        out = await _repair_with_sibling_context(out, facts, styles)
+    return out
+
+
+async def _style_one(facts: dict[str, Any], style: str) -> str:
+    if not any(_provider_endpoint(provider, style=True)[1] for provider in _provider_order("style")):
+        return fallback_caption(style, facts)
+
+    prompt_bundle = STYLE_PROMPTS.get(style)
+    if prompt_bundle is None:
+        # Unknown style — emit a neutral one-liner rather than nothing.
+        return fallback_caption("formal", facts)
+
+    system_prompt, few_shots, user_template = prompt_bundle
+    facts_json = json.dumps(facts, ensure_ascii=False)
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    for ex_facts, ex_caption in few_shots:
+        messages.append({"role": "user", "content": user_template.format(facts=ex_facts)})
+        messages.append({"role": "assistant", "content": ex_caption})
+    messages.append({"role": "user", "content": user_template.format(facts=facts_json)})
+
+    if EVIDENCE_LOCK_ENABLED:
+        return await _style_with_evidence_lock(messages, facts, style)
+
+    return await _call_style_provider(messages, style)
+
+
+async def _call_style_provider(messages: list[dict[str, Any]], style: str) -> str:
+    last_error: Exception | None = None
+    for provider in _provider_order("style"):
+        base_url, api_key, models = _provider_endpoint(provider, style=True)
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.7 if style != "formal" else 0.3,
+                "max_tokens": STYLE_MAX_TOKENS,
+            }
+            try:
+                return _extract_final_caption(await _chat_content_at(base_url, api_key, payload))
+            except httpx.HTTPError as e:
+                last_error = e
+                log.warning("style model failed (%s/%s/%s): %s", style, provider, model, e)
+
+    if last_error:
+        raise last_error
+    return ""
+
+
+async def _style_with_evidence_lock(
+    messages: list[dict[str, Any]],
+    facts: dict[str, Any],
+    style: str,
+) -> str:
+    """Generate, score, and optionally repair captions against visual evidence."""
+    candidates: list[str] = []
+    try:
+        primary = await _call_style_provider(messages, style)
+    except Exception as e:  # noqa: BLE001
+        log.warning("primary style candidate failed (%s): %s", style, e)
+        primary = ""
+    if primary and not _evidence_issues(style, primary, facts):
+        return primary
+    if primary:
+        candidates.append(primary)
+
+    for i in range(1, STYLE_CANDIDATES):
+        candidate_messages = list(messages)
+        candidate_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Produce an alternate version with the same style, but use "
+                    "different wording while preserving concrete visual evidence."
+                ),
+            }
+        )
+        try:
+            candidates.append(await _call_style_provider(candidate_messages, style))
+        except Exception as e:  # noqa: BLE001
+            log.warning("style candidate failed (%s/%s): %s", style, i + 1, e)
+
+    fallback = fallback_caption(style, facts)
+    if not _evidence_issues(style, fallback, facts):
+        candidates.append(fallback)
+
+    if not candidates:
+        return fallback_caption(style, facts)
+
+    ranked = sorted(
+        candidates,
+        key=lambda caption: _evidence_score(style, caption, facts),
+        reverse=True,
+    )
+    best = ranked[0]
+    issues = _evidence_issues(style, best, facts)
+    if issues and STYLE_REPAIR_ENABLED:
+        repaired = await _repair_caption(best, facts, style, issues)
+        if _evidence_score(style, repaired, facts) >= _evidence_score(style, best, facts):
+            best = repaired
+        if _evidence_issues(style, best, facts):
+            deterministic = _deterministic_evidence_caption(style, best, facts)
+            if _evidence_score(style, deterministic, facts) > _evidence_score(style, best, facts):
+                best = deterministic
+    return best
+
+
+async def _repair_caption(
+    caption: str,
+    facts: dict[str, Any],
+    style: str,
+    issues: list[str],
+) -> str:
+    prompt_bundle = STYLE_PROMPTS.get(style)
+    if prompt_bundle is None:
+        return caption
+    system_prompt, _, _ = prompt_bundle
+    evidence = ", ".join(_evidence_terms(facts)[:14])
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\nRepair mode: improve the caption without "
+                "inventing facts. Keep exactly the requested style."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Scene facts:\n"
+                f"{json.dumps(facts, ensure_ascii=False)}\n\n"
+                f"Caption to repair:\n{caption}\n\n"
+                f"Detected issues: {', '.join(issues)}.\n"
+                f"Useful visual evidence terms: {evidence}.\n"
+                "Rewrite as one richer caption. Preserve at least three visible "
+                "details when available. Return only the caption."
+            ),
+        },
+    ]
+    try:
+        return await _call_style_provider(messages, style)
+    except Exception as e:  # noqa: BLE001
+        log.warning("style repair failed (%s): %s", style, e)
+        return caption
+
+
+async def _repair_with_sibling_context(
+    captions: dict[str, str],
+    facts: dict[str, Any],
+    styles: list[str],
+) -> dict[str, str]:
+    repaired = dict(captions)
+    if not any(_provider_endpoint(provider, style=True)[1] for provider in _provider_order("style")):
+        return repaired
+    sibling_context = "\n".join(
+        f"- {style}: {caption}" for style, caption in captions.items() if caption.strip()
+    )
+    for style in styles:
+        caption = repaired.get(style, "")
+        issues = _evidence_issues(style, caption, facts)
+        if not issues:
+            continue
+        prompt_bundle = STYLE_PROMPTS.get(style)
+        if prompt_bundle is None:
+            continue
+        system_prompt, _, _ = prompt_bundle
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    f"{system_prompt}\n\nCross-style repair mode: use the scene "
+                    "facts first. The sibling captions are draft evidence from "
+                    "the same video; use them only to recover concrete visual "
+                    "details, not to copy their tone."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Scene facts:\n"
+                    f"{json.dumps(facts, ensure_ascii=False)}\n\n"
+                    f"Caption to repair for style {style}:\n{caption}\n\n"
+                    f"Sibling draft captions:\n{sibling_context}\n\n"
+                    f"Detected issues: {', '.join(issues)}.\n"
+                    "Return one richer caption in the requested style only."
+                ),
+            },
+        ]
+        try:
+            candidate = await _call_style_provider(messages, style)
+        except Exception as e:  # noqa: BLE001
+            log.warning("cross-style repair failed (%s): %s", style, e)
+            continue
+        if _evidence_score(style, candidate, facts) > _evidence_score(style, caption, facts):
+            repaired[style] = candidate
+    return repaired
+
+
+_STOPWORDS = {
+    "with", "from", "that", "this", "there", "their", "while", "through",
+    "under", "above", "into", "onto", "over", "short", "video", "clip",
+    "scene", "visible", "shows", "appears", "around", "toward", "towards",
+    "present", "factual", "frame", "frames", "camera",
+}
+
+
+def _evidence_terms(facts: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    for key in (
+        "summary",
+        "setting",
+        "camera",
+        "temporal_progression",
+        "audio_hint",
+    ):
+        value = facts.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    for key in (
+        "subjects",
+        "actions",
+        "visual_details",
+        "fine_grained_observations",
+        "salient_objects",
+        "spatial_relations",
+    ):
+        value = facts.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value)
+    raw = " ".join(parts).lower().replace("/", " ")
+    terms = [
+        token
+        for token in re.findall(r"[a-z][a-z0-9-]{2,}", raw)
+        if token not in _STOPWORDS and len(token) >= 4
+    ]
+    return list(dict.fromkeys(terms))
+
+
+def _evidence_phrases(facts: dict[str, Any]) -> list[str]:
+    phrases: list[str] = []
+    for key in ("visual_details", "fine_grained_observations", "salient_objects", "spatial_relations"):
+        value = facts.get(key)
+        if isinstance(value, list):
+            phrases.extend(str(item).strip().rstrip(".") for item in value if str(item).strip())
+    for key in ("camera", "temporal_progression", "setting"):
+        value = facts.get(key)
+        if isinstance(value, str) and value.strip():
+            phrases.append(value.strip().rstrip("."))
+    cleaned: list[str] = []
+    for phrase in phrases:
+        if 2 <= len(phrase.split()) <= 12 and phrase.lower() not in {p.lower() for p in cleaned}:
+            cleaned.append(phrase)
+    return cleaned
+
+
+def _deterministic_evidence_caption(
+    style: str,
+    caption: str,
+    facts: dict[str, Any],
+) -> str:
+    if style != "formal":
+        return caption
+    summary = facts.get("summary")
+    base = summary.strip().rstrip(".") if isinstance(summary, str) and summary.strip() else caption.strip().rstrip(".")
+    phrases = [phrase for phrase in _evidence_phrases(facts) if phrase.lower() not in base.lower()]
+    if not phrases:
+        return caption
+    additions = phrases[:3]
+    if len(additions) == 1:
+        detail = additions[0]
+    elif len(additions) == 2:
+        detail = f"{additions[0]} and {additions[1]}"
+    else:
+        detail = f"{additions[0]}, {additions[1]}, and {additions[2]}"
+    repaired = f"{base}, with {detail}."
+    return repaired[:300].strip()
+
+
+def _caption_words(caption: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z][a-z0-9-]{2,}", caption.lower().replace("/", " "))
+        if token not in _STOPWORDS
+    }
+
+
+def _word_count(caption: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", caption))
+
+
+def _evidence_issues(style: str, caption: str, facts: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    words = _caption_words(caption)
+    evidence = set(_evidence_terms(facts))
+    anchors = len(words & evidence)
+    min_words = 22 if style == "formal" else 18
+    min_anchors = 3 if style == "formal" else 2
+    if _word_count(caption) < min_words:
+        issues.append("too_short")
+    if anchors < min_anchors:
+        issues.append("missing_visual_anchors")
+    if style == "humorous_tech" and not (words & {
+        "api", "queue", "latency", "scheduler", "cache", "deploy",
+        "production", "commit", "runtime", "server", "rollback", "logs",
+        "staging", "pipeline", "code",
+    }):
+        issues.append("missing_clear_tech_reference")
+    return issues
+
+
+def _evidence_score(style: str, caption: str, facts: dict[str, Any]) -> float:
+    if not caption_passes_style_filter(style, caption):
+        return -10.0
+    words = _caption_words(caption)
+    evidence = set(_evidence_terms(facts))
+    anchors = len(words & evidence)
+    count = _word_count(caption)
+    target = 30 if style == "formal" else 24
+    length_score = min(count / target, 1.0)
+    anchor_score = min(anchors / (4 if style == "formal" else 3), 1.0)
+    penalty = 0.2 * len(_evidence_issues(style, caption, facts))
+    return length_score + anchor_score - penalty
