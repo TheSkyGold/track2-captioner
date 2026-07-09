@@ -335,7 +335,19 @@ def _matches_term_list(text: str, terms: set[str]) -> bool:
     return any(re.search(rf"\b{re.escape(term)}\b", low) for term in terms)
 
 
+_SKIN_COLOR = re.compile(
+    r"\b(dark|light|pale|olive|tan|tanned|brown|black|white|fair)[- ]skin(?:ned)?\b"
+    r"|\bskin[- ](colou?r|tone)\b|\bcomplexion\b",
+    re.IGNORECASE,
+)
+
+
 def _mentions_sensitive_appearance(text: str) -> bool:
+    # A weaker fallback model (e.g. Groq) may describe a person's skin color;
+    # the judge penalizes appearance/identity remarks, so catch those phrases
+    # even though "dark skin" is not a single banned word.
+    if _SKIN_COLOR.search(text):
+        return True
     return _matches_term_list(text, SENSITIVE_APPEARANCE_TERMS)
 
 
