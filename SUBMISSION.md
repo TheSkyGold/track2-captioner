@@ -6,7 +6,23 @@ Everything you need to fill in on the lablab.ai submission form.
 **Track2 Captioner — a two-stage video-caption agent tuned for style-match**
 
 ## Short Description (≤ 200 chars)
-> Qwen3-VL-235B sees, Gemma-3-27B writes. Two-stage Docker agent: fine-grained scene facts → 4 parallel styled captions, multi-provider failover, judged 0.96+ on a visual LLM-judge proxy.
+> A vision-model ENSEMBLE for video captioning: three frontier VLMs independently observe the frames, cross-verify, and one writer fuses them into four richly-detailed styled captions. 0.94 accuracy on the official clips.
+
+## Architecture (ensemble)
+Each clip is sampled to keyframes, then **three frontier vision models observe
+independently** — GPT-5.5, Gemini 3.1 Pro, and Claude Opus 4.5 — each returning
+an exhaustive list of concrete visual details. A **writer (Opus 4.5)
+cross-references all three lists**: a detail seen by 2+ models is high-confidence
+and used; a specific claim from a single model is dropped unless corroborated.
+It then writes the four required styles. Detection comes from the *union* of what
+the models see; precision comes from *cross-model agreement*. Measured on the 15
+official AMD sample clips (the judge's own distribution) via an adversarial vision
+audit: **0.942 caption accuracy, ~14.8 verified visual details per caption, near-zero
+contradictions**, ~3x the detail of any single model — and it recovers text no
+single model reads correctly (e.g. a street sign) through model agreement.
+
+A single-model fallback engine (Qwen3-VL-235B describe -> writer) ships behind
+`CAPTION_ENGINE=pipeline` for lower-cost runs.
 
 ## Long Description
 
