@@ -6,18 +6,28 @@ generates four styled English captions per clip, and writes
 
 ## Architecture
 
-Pattern: understand once, style four times in parallel.
+**Submission engine = a vision-model ENSEMBLE** (`CAPTION_ENGINE=ensemble`).
 
-1. Download each MP4 URL from `tasks.json`.
-2. Extract keyframes with FFmpeg using scene-change sampling plus uniform fallback.
-3. Optionally transcribe audio with Groq Whisper when `GROQ_API_KEY` is set.
-4. Ask a VLM for compact factual scene JSON.
-5. Generate the four required styles independently:
-   `formal`, `sarcastic`, `humorous_tech`, `humorous_non_tech`.
-6. Normalize and validate the final JSON with Pydantic before writing output.
+1. Download each MP4 and extract keyframes (scene-change + uniform sampling).
+2. **Three frontier vision models observe the frames independently** — GPT-5.5,
+   Gemini 3.1 Pro, Claude Opus 4.5 — each returning an exhaustive detail list.
+3. A **writer (Opus 4.5) cross-references all three lists**: a detail 2+ models
+   agree on is trusted; a lone specific claim is dropped unless corroborated.
+4. It writes the four required styles: `formal`, `sarcastic`, `humorous_tech`,
+   `humorous_non_tech`. Normalized + Pydantic-validated before output.
 
-The runtime is built to degrade gracefully: provider failures, missing API keys,
-and timeouts produce non-empty styled fallbacks rather than malformed output.
+Detection comes from the *union* of what the models see; precision from their
+*agreement*. Measured on the 15 official AMD sample clips via an adversarial
+vision audit: **0.942 accuracy, ~14.8 verified details/caption**, ~3× a single
+model — see `eval/BENCHMARK_LOG.md`.
+
+A single-model fallback (`CAPTION_ENGINE=pipeline`: Qwen3-VL-235B describe →
+writer) is available for lower-cost runs. The runtime degrades gracefully:
+provider failover, non-empty styled fallbacks, never malformed output.
+
+**Dossier:** `SUBMISSION.md`, `docs/video_script.md`, `docs/slides.html`,
+`docs/comparison.html` (models side by side), `docs/official.html` (captions on
+the jury clips). Test any video: `python -m app.webapp` → upload or paste a URL.
 
 ## Quickstart
 
