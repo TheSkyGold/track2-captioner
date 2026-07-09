@@ -1,6 +1,42 @@
 # Submit Status
 
-Last checked locally: 2026-07-08 18:20 Europe/Paris.
+Last checked locally: 2026-07-09 Europe/Paris.
+
+## 2026-07-09 — Retired the 8B judge; adopted a vision-adversarial audit
+
+The local `eval/local_judge.py` (Qwen-8B) was returning ~1.0 on captions that
+were measurably wrong — it masked a real accuracy regression. It is no longer
+the gate. The gate is now an adversarial VISION audit: independent Opus vision
+agents read the actual sampled frames and refute every factual claim
+(caption-truth-audit workflow). Ground truth is the pixels, not a proxy model.
+
+Measured against the real frames (12 sample captions, mean of per-claim
+accuracy; a single contradicted claim caps that caption at 0.4):
+
+| Config | Accuracy | Contradictions | Hallucinations |
+|---|---|---|---|
+| earlier "235B + color-conservatism" build | 0.793 | 2 | 8 |
+| prior Codex-era `best_model_guarded` baseline | 0.965 | 0 | 4 |
+| **current build (submission candidate)** | **0.983** | **0** | **2** |
+
+Structural changes that produced the win (each a real bug, not a tuning knob):
+- **`formal` is now rendered deterministically** from the (excellent) 235B
+  describe facts — summary plus the strongest unused background phrases, filled
+  under the 300-char cap (`_deterministic_formal`). The style model reliably
+  wrote the subject but dropped verified background; formal accuracy is too
+  important to leave to that variance. The three creative styles still go
+  through Gemma-3-27B (Gemma bonus intact).
+- **`_neutralize_risky_colors`**: the VLM sometimes asserts a vehicle/screen
+  color the frames don't support ("a red bus" when it is blue). Vehicle/monitor
+  color is low value and a frequent contradiction, so the color adjective is
+  stripped before captioning.
+- **`_extract_final_caption` bug fixed**: it kept only the LAST line, silently
+  deleting sentence 1 of any two-sentence caption. Now joins the body and
+  strips a leaked leading "thought"/reasoning token.
+- **`_clean_caption` coerces to ASCII** (fixes "…"→"..." and mojibake like
+  "â€¦") so no garbled output ships.
+- Formal few-shots rewritten to rich two-sentence exemplars.
+- The whole substring-matching filter bug family (earlier today) stays fixed.
 
 ## 2026-07-08 — Critical style-filter fix + Gemma-bonus decision
 

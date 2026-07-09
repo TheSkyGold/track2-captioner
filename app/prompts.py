@@ -80,32 +80,38 @@ You MUST NOT:
   - editorialise or add feelings the facts don't state
 """
 
+# NOTE: formal gold captions are deliberately TWO sentences and pack the
+# background from the facts (buildings, signage, terrain, lighting). Style
+# models imitate the few-shot shape more than the instructions, so thin
+# one-sentence examples here previously caused thin captions.
 FORMAL_FEWSHOTS = [
     _fs(
         '{"summary":"A tabby kitten walks through green foliage in a sunlit garden.",'
         '"setting":"garden","subjects":["kitten","plants"],"actions":["walking"],'
+        '"visual_details":["dappled sunlight","stone path","wooden fence behind"],'
         '"mood":"calm","audio_hint":"ambient outdoor","tech_visible":false}',
-        "A young tabby kitten moves cautiously through dense green foliage in a sunlit garden setting."
+        "A young tabby kitten steps cautiously along a stone path through dense green foliage, its gaze fixed ahead. Dappled sunlight falls across the garden, with a weathered wooden fence framing the scene behind."
     ),
     _fs(
         '{"summary":"Cars drive down an autumn boulevard lined with golden trees.",'
-        '"setting":"urban street","subjects":["cars","trees"],"actions":["driving"],'
+        '"setting":"urban street","subjects":["cars","trees","buildings"],"actions":["driving"],'
+        '"visual_details":["golden-leaved trees both sides","glass office towers","a bakery storefront sign","overcast sky"],'
         '"mood":"neutral","audio_hint":"traffic","tech_visible":false}',
-        "Vehicles proceed along a broad city boulevard, flanked by trees displaying the golden foliage typical of late autumn."
+        "Numerous vehicles proceed along a broad city boulevard flanked by trees in golden late-autumn foliage. Glass office towers rise behind them beside a bakery storefront, all beneath a flat overcast sky."
     ),
     _fs(
         '{"summary":"A person works at a desktop computer in an open-plan office.",'
         '"setting":"office","subjects":["person","desktop computer","desk"],'
-        '"actions":["typing","working"],"mood":"neutral","audio_hint":"keyboard clicks",'
-        '"tech_visible":true}',
-        "An office worker is engaged in tasks at a desktop workstation within a modern open-plan working environment."
+        '"actions":["typing","working"],"visual_details":["dual monitors","glass partition walls","a potted plant","pendant ceiling lights"],'
+        '"mood":"neutral","audio_hint":"keyboard clicks","tech_visible":true}',
+        "An office worker types steadily at a desk, focused on the monitor in front of them. The modern open-plan space extends behind, with glass partition walls, a potted plant, and rows of pendant ceiling lights."
     ),
     _fs(
         '{"summary":"A chef plates a dish under warm restaurant lighting.",'
         '"setting":"kitchen","subjects":["chef","plate","food"],'
-        '"actions":["plating","garnishing"],"mood":"focused","audio_hint":"kitchen ambience",'
-        '"tech_visible":false}',
-        "A professional chef carefully plates a completed dish in a restaurant kitchen illuminated by warm overhead lighting."
+        '"actions":["plating","garnishing"],"visual_details":["stainless steel counter","hanging pans","warm overhead lamps"],'
+        '"mood":"focused","audio_hint":"kitchen ambience","tech_visible":false}',
+        "A chef carefully garnishes a completed dish on a stainless steel counter, hands steady over the plate. Warm overhead lamps light the restaurant kitchen, with pans hanging from a rack along the wall behind."
     ),
 ]
 
@@ -294,8 +300,10 @@ Additional quality requirements:
       distinctive marks; eye color ONLY when a close-up makes it unmistakable.
     * Streets/outdoor: approximate counts ("five high-rise buildings",
       "dozens of cars", "four lanes"), storefront signs and banners
-      (transcribe short legible text, note the language), tree or plant type
-      when identifiable (ginkgo, palm, plane tree), weather and light.
+      (transcribe short legible text, note the language), background terrain
+      (distant hills/mountains, skyline), weather and light. Name a tree/plant
+      SPECIES only if the leaf shape is clearly resolved; if you only see the
+      color, say "yellow-leaved trees" — never guess "ginkgo/palm/oak".
     * Desks/indoor: every peripheral and object (mouse, coiled cable,
       monitor, plant, mug), furniture colors and materials, light fixtures.
     Prefer a specific noun over a generic one whenever the pixels support it.
@@ -312,6 +320,25 @@ Additional quality requirements:
     small signs. Do not put uncertain details in summary.
   - Hard rule: NEVER state eye color of a person or animal as a fact — frame
     lighting makes it unreliable. It belongs in uncertain_details only.
+  - Hard rule on COLOR (a top source of wrong captions): attach a color word
+    to an object ONLY if that is its obvious dominant color across multiple
+    frames. If you are not certain, name the object with NO color word rather
+    than guess. Never guess a vehicle's color ("red bus", "white truck") — say
+    "a bus", "trucks" unless one color unmistakably dominates. A wrong color is
+    scored as a hallucination, worse than an omitted one. A monitor/TV seen
+    from behind shows only its dark housing — do NOT call the monitor "silver"
+    or describe the screen content.
+  - Preserve the whole scene: always record the readable BACKGROUND — building
+    count/type, tree color, any storefront/sign text and its language, distant
+    terrain (hills/mountains), lighting — in visual_details or salient_objects.
+    These background facts must survive into the caption.
+  - Only quote sign/storefront text you can actually read across frames;
+    otherwise describe the sign by color and position.
+  - Do NOT claim people, drivers, or occupants unless a person is actually
+    visible in the frames.
+  - Setting words are claims: use "garden", "forest", "park", "office",
+    "kitchen" only with clear evidence. Default to what is literally visible
+    ("bushes and undergrowth", "an indoor room") when unsure.
   - In cluttered indoor scenes (workshops, garages, kitchens, markets), name
     the specific tools, machines, materials, and surfaces you can actually see
     instead of summarizing the clutter generically.
@@ -325,16 +352,17 @@ Additional quality requirements:
 FORMAL_SYSTEM += """
 
 Quality target:
-  - Output one or two sentences, 24-45 words total.
-  - Use at least four concrete visual anchors when available: main subject
-    with its distinctive appearance details (hairstyle, jewelry, coat pattern,
-    signage...), action, setting, and one object/color/camera/spatial detail.
-  - Fine-grained specifics beat generic labels: "orange tabby kitten" beats
-    "cat", "silver mouse and coiled cable" beats "desk items".
+  - Output TWO full sentences, 38-55 words total. One thin sentence loses
+    points — you must spend the second sentence on grounded background.
+  - Sentence 1: main subject + its distinctive appearance details + action.
+  - Sentence 2: the SETTING and BACKGROUND from the facts — buildings and
+    their count, any sign/storefront text, trees and their color, distant
+    terrain, lighting, and camera/time-lapse. Include every background fact
+    the scene-facts JSON provides; do not drop them for brevity.
+  - Fine-grained specifics beat generic labels: "an orange tabby kitten" beats
+    "a cat"; naming the readable sign text beats "a building".
   - Prefer careful approximations over fake precision: "several lanes" or
     "dozens of cars" is allowed; exact counts are not unless obvious.
-  - Name the specific setting and main action without filler.
-  - Do not choose brevity over visual specificity.
 """
 
 SARCASTIC_SYSTEM += """
@@ -393,6 +421,24 @@ Quality target:
   - Do not trade away detail for a shorter punchline.
 """
 
+GROUNDING_CONTRACT = """
+
+Grounding contract (accuracy is scored — obey strictly):
+  - Use ONLY facts present in the scene-facts JSON. Do not add any color,
+    material, brand, count, person, or object that the facts do not state.
+  - If the facts give an object without a color, keep it without a color.
+    Never invent a color (no "red bus" or "black keyboard" unless the facts
+    say so).
+  - Preserve the concrete background the facts provide (buildings, trees and
+    their color, signage text, terrain, lighting). Do not compress the scene
+    down to just the main subject — a richer grounded caption scores higher.
+  - Do not assert people/occupants, brands, or equipment (servers, laptops)
+    that are not in the facts.
+  - Setting labels are factual claims even inside a joke: never call a scene a
+    "garden", "forest", "park", or "wilderness" unless the facts say so. If the
+    facts say bushes/undergrowth, keep it that way even when being funny.
+"""
+
 STYLE_SAFETY_BOOST = """
 
 Safety and taste:
@@ -407,10 +453,10 @@ Safety and taste:
     unless the requested style is sarcastic and the visible fact remains clear.
 """
 
-FORMAL_SYSTEM += STYLE_SAFETY_BOOST
-SARCASTIC_SYSTEM += STYLE_SAFETY_BOOST
-HTECH_SYSTEM += STYLE_SAFETY_BOOST
-HNONTECH_SYSTEM += STYLE_SAFETY_BOOST
+FORMAL_SYSTEM += GROUNDING_CONTRACT + STYLE_SAFETY_BOOST
+SARCASTIC_SYSTEM += GROUNDING_CONTRACT + STYLE_SAFETY_BOOST
+HTECH_SYSTEM += GROUNDING_CONTRACT + STYLE_SAFETY_BOOST
+HNONTECH_SYSTEM += GROUNDING_CONTRACT + STYLE_SAFETY_BOOST
 
 STYLE_PROMPTS = {
     "formal": (FORMAL_SYSTEM, FORMAL_FEWSHOTS, _USER_TMPL),

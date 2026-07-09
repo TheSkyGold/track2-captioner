@@ -262,10 +262,22 @@ def _clean_caption(text: str) -> str:
         "\u201d": '"',
         "\u2013": "-",
         "\u2014": "-",
+        "\u2026": "...",
         "\u00a0": " ",
+        # mojibake: UTF-8 punctuation misdecoded as latin-1 (\u2026 ' ' - -)
+        "\u00e2\u20ac\u00a6": "...",
+        "\u00e2\u20ac\u2122": "'",
+        "\u00e2\u20ac\u0153": '"',
+        "\u00e2\u20ac\u009d": '"',
+        "\u00e2\u20ac\u201c": "-",
+        "\u00e2\u20ac\u201d": "-",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
+    # Captions must be English/ASCII \u2014 drop any remaining non-ASCII rather than
+    # ship mojibake. Do this after the known-punctuation fixes above.
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = " ".join(text.split())
     if (
         (text.startswith('"') and text.endswith('"'))
         or (text.startswith("'") and text.endswith("'"))

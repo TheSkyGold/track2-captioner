@@ -114,6 +114,7 @@ async def caption_one_video(video_url: str, styles: list[str]) -> dict[str, str]
         transcript_hint = await _transcript_hint(video_path, workdir)
 
         facts = await _describe(frames, transcript_hint)
+        facts = _neutralize_risky_colors(facts)
         captions = await _style_all(facts, styles)
         normalized = normalize_captions(captions, styles, facts)
         if EVIDENCE_LOCK_ENABLED:
@@ -231,9 +232,19 @@ def _extract_final_caption(text: str) -> str:
             idx = cleaned.lower().rfind(marker.lower())
             cleaned = cleaned[idx + len(marker) :].strip()
             break
-    lines = [line.strip(" -\t") for line in cleaned.splitlines() if line.strip()]
-    if len(lines) > 1:
-        cleaned = lines[-1]
+    # Drop obvious preamble/reasoning lines, then JOIN the caption body.
+    # Taking only the last line here used to silently delete sentence 1 of a
+    # two-sentence caption when the model put sentences on separate lines.
+    preamble = ("here's", "here is", "sure", "certainly", "okay", "of course", "caption:")
+    lines = [
+        line.strip(" -*\t")
+        for line in cleaned.splitlines()
+        if line.strip() and not line.strip().lower().startswith(preamble)
+    ]
+    if lines:
+        cleaned = " ".join(lines)
+    # Strip a leaked leading reasoning token (some models prefix "thought ...").
+    cleaned = re.sub(r"^\s*(thought|thinking|reasoning|answer)\b[:\s-]*", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 
@@ -615,7 +626,136 @@ async def _style_one(facts: dict[str, Any], style: str) -> str:
     if EVIDENCE_LOCK_ENABLED:
         return await _style_with_evidence_lock(messages, facts, style)
 
+    # FORMAL is scored on completeness+accuracy, not creativity. The describe
+    # facts are already rich and verified, so render formal deterministically
+    # from them rather than let a style model compress/embellish it. The three
+    # creative styles still go through the model (and keep the Gemma bonus).
+    if style == "formal":
+        deterministic = _deterministic_formal(facts)
+        if _word_count(deterministic) >= 20:
+            return deterministic
+        return _ensure_formal_richness(await _call_style_provider(messages, style), facts)
+
     return await _call_style_provider(messages, style)
+
+
+_RISKY_COLOR = re.compile(
+    r"\b(red|blue|green|yellow|white|black|silver|grey|gray|orange|brown|golden)"
+    r"(?:-framed|-colored|-coloured)?\s+"
+    r"(bus|buses|car|cars|truck|trucks|van|vans|sedan|sedans|suv|suvs|vehicle|vehicles|"
+    r"monitor|monitors|screen|screens|tv|laptop|laptops|keyboard|keyboards)\b",
+    re.IGNORECASE,
+)
+
+
+def _neutralize_risky_colors(facts: dict[str, Any]) -> dict[str, Any]:
+    """Strip guessed colors from vehicles and screens in the describe facts.
+
+    The VLM sometimes asserts a color for a vehicle/monitor that the frames do
+    not support (e.g. "a red bus" when the bus is blue). Vehicle/screen color is
+    low value and a frequent contradiction, so we drop the color adjective and
+    keep the noun. Runs on every string field before the facts reach captions.
+    """
+    def scrub(v: Any) -> Any:
+        if isinstance(v, str):
+            return _RISKY_COLOR.sub(lambda m: m.group(2), v)
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        if isinstance(v, dict):
+            return {k: scrub(x) for k, x in v.items()}
+        return v
+    return {k: scrub(v) for k, v in facts.items()}
+
+
+def _deterministic_formal(facts: dict[str, Any]) -> str:
+    """Assemble a rich, factual formal caption straight from the scene facts.
+
+    base = the describe summary; then append the strongest background phrases
+    (buildings, signage, terrain, objects) that the summary did not already
+    mention, filling up to the 300-char caption cap. Every token is grounded in
+    the describe output — nothing is invented here.
+    """
+    summary = str(facts.get("summary", "")).strip()
+    if not summary:
+        return ""
+    base = summary.rstrip(".")
+    present = base.lower()
+    picked: list[str] = []
+    seen = {base.lower()}
+    for phrase in _evidence_phrases(facts):
+        p = " ".join(phrase.strip().rstrip(".").split())
+        if not p or len(p.split()) > 8 or p.lower() in seen:
+            continue
+        if any(w in present for w in p.lower().split() if len(w) > 4):
+            continue
+        seen.add(p.lower())
+        picked.append(p)
+    joined = base + "."
+    budget = 292 - len(joined) - len(" Also visible: .")
+    kept: list[str] = []
+    for p in picked:
+        if budget - (len(p) + 2) < 0:
+            break
+        kept.append(p)
+        budget -= len(p) + 2
+        if len(kept) >= 4:
+            break
+    if not kept:
+        return joined
+    if len(kept) == 1:
+        detail = kept[0]
+    else:
+        detail = ", ".join(kept[:-1]) + f", and {kept[-1]}"
+    return f"{joined} Also visible: {detail}."
+
+
+def _ensure_formal_richness(caption: str, facts: dict[str, Any]) -> str:
+    """Guarantee the factual background survives into the formal caption.
+
+    The style model reliably writes the main subject but often drops the rich,
+    verified background (buildings, signage, terrain, lighting) even when the
+    scene-facts contain it. Rather than fight that stochastically via prompts,
+    we deterministically append the strongest unused background phrases when
+    the caption is thin. Accuracy-positive: every appended phrase comes from the
+    describe facts, never invented.
+    """
+    if _word_count(caption) >= 34:
+        return caption
+    present = caption.lower()
+    # Prefer concise background phrases (salient_objects are short nouns); keep
+    # only those adding NEW information, short enough to read cleanly.
+    candidates: list[str] = []
+    for phrase in _evidence_phrases(facts):
+        p = phrase.strip().rstrip(".")
+        if not p or len(p.split()) > 8:
+            continue
+        if p.lower() in present:
+            continue
+        if any(w in present for w in p.lower().split() if len(w) > 4):
+            continue
+        if p.lower() not in {c.lower() for c in candidates}:
+            candidates.append(p)
+    joined = caption.rstrip()
+    if not joined.endswith("."):
+        joined += "."
+    # Fill under the 300-char caption cap (leave margin for ", and " + period).
+    picked: list[str] = []
+    budget = 292 - len(joined) - len(" In the background, .")
+    for p in candidates:
+        add = len(p) + 2
+        if budget - add < 0:
+            break
+        picked.append(p)
+        budget -= add
+        if len(picked) >= 3:
+            break
+    if not picked:
+        return caption
+    detail = picked[0] if len(picked) == 1 else (
+        f"{picked[0]} and {picked[1]}" if len(picked) == 2
+        else f"{picked[0]}, {picked[1]}, and {picked[2]}"
+    )
+    return f"{joined} In the background, {detail}."
 
 
 async def _call_style_provider(messages: list[dict[str, Any]], style: str) -> str:
