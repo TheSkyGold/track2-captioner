@@ -16,10 +16,30 @@ from flask import Flask, request, jsonify, Response
 
 from app import pipeline as P
 from app.ensemble import caption_ensemble, caption_ensemble_frames
-from app.models import REQUIRED_STYLES
+from app.models import REQUIRED_STYLES, normalize_captions
 
 app = Flask(__name__)
 STYLES = list(REQUIRED_STYLES)
+
+
+async def _caption_frames(frames: list[Path]) -> dict[str, str]:
+    """Ensemble first; on any failure (e.g. OpenRouter 402) degrade to the
+    single-model pipeline so the tester still returns real captions offline."""
+    try:
+        return await caption_ensemble_frames(frames, STYLES)
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("ensemble failed (%s); pipeline fallback", e)
+        facts = P._neutralize_risky_colors(await P._describe(frames, ""))
+        caps = await P._style_all(facts, STYLES)
+        return normalize_captions(caps, STYLES, facts)
+
+
+async def _caption_url(url: str) -> dict[str, str]:
+    try:
+        return await caption_ensemble(url, STYLES)
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("ensemble failed (%s); pipeline fallback", e)
+        return await P.caption_one_video(url, STYLES)
 
 PAGE = """<!doctype html><meta charset=utf-8><title>Track 2 - Caption any video</title>
 <style>
@@ -62,12 +82,12 @@ def caption():
                 vp = wd / "upload.mp4"
                 up.save(vp)
                 frames = P._extract_keyframes(vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE)
-                caps = asyncio.run(caption_ensemble_frames(frames, STYLES))
+                caps = asyncio.run(_caption_frames(frames))
         else:
             url = (request.get_json(silent=True) or {}).get("url", "").strip()
             if not url:
                 return jsonify({"error": "provide a video URL or upload a file"}), 400
-            caps = asyncio.run(caption_ensemble(url, STYLES))
+            caps = asyncio.run(_caption_url(url))
         return jsonify({"captions": caps})
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
