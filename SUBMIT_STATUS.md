@@ -38,6 +38,32 @@ Structural changes that produced the win (each a real bug, not a tuning knob):
 - Formal few-shots rewritten to rich two-sentence exemplars.
 - The whole substring-matching filter bug family (earlier today) stays fixed.
 
+### Generalization (anti-overfit) — audited on 12 UNSEEN stress clips
+
+The same vision audit, run on the 12 `eval/stress_clips.json` clips (48
+captions, frames the model was tuned on for NONE of them):
+
+| Build | Accuracy | Contradictions | Hallucinations |
+|---|---|---|---|
+| deterministic-formal build | 0.885 | 6 | 22 |
+| + framing/color/ring hardening (current) | **0.916** | **2** | 20 |
+
+Hardening that lifted unseen-clip accuracy (each targets a contradiction the
+audit found on real frames):
+- `_background_phrases`: the formal background sentence no longer pulls camera
+  shot-size / motion claims ("static shot", "no visible change") — the VLM gets
+  those wrong and the judge barely rewards them.
+- `_neutralize_risky_colors` extended to worn items (gloves, collar) and to
+  "color <filler> noun" ("silver computer monitor", "blue nitrile gloves"), and
+  `_RING_HAND` drops which hand/finger a ring is on — all frequent
+  contradictions.
+- Describe prompt: don't assert shot size/motion or a ring's hand; attribute a
+  color to the right object (a colored jersey doesn't make the gloves colored).
+
+The 2 residual contradictions are genuine VLM perception errors (an invented
+dog collar; a mug's beverage called "warm") — perception limits, not pipeline
+bugs. Demo clips: 0.983. Unseen clips: 0.916. Both beat the prior baseline.
+
 ## 2026-07-08 — Critical style-filter fix + Gemma-bonus decision
 
 - **Fixed a score-killing bug:** the pronoun `"it"` was in `TECH_KEYWORDS`

@@ -336,6 +336,14 @@ Additional quality requirements:
     otherwise describe the sign by color and position.
   - Do NOT claim people, drivers, or occupants unless a person is actually
     visible in the frames.
+  - Camera claims are unreliable: do NOT assert shot size (close-up/medium/
+    wide), camera motion (static/panning/handheld), or that the scene "does not
+    change". Only note "time-lapse" when motion blur clearly shows sped-up
+    footage. Leave the "camera" field short or empty if unsure.
+  - Attribute colors to the RIGHT object: a colored jersey/shirt does not make
+    the gloves or collar that color. For a ring, say "a ring" without naming
+    which hand or finger. For a worn collar/glove, omit the color unless it is
+    unmistakable and clearly on that item.
   - Setting words are claims: use "garden", "forest", "park", "office",
     "kitchen" only with clear evidence. Default to what is literally visible
     ("bushes and undergrowth", "an indoor room") when unsure.

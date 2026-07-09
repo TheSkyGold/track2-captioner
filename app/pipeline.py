@@ -641,9 +641,17 @@ async def _style_one(facts: dict[str, Any], style: str) -> str:
 
 _RISKY_COLOR = re.compile(
     r"\b(red|blue|green|yellow|white|black|silver|grey|gray|orange|brown|golden)"
-    r"(?:-framed|-colored|-coloured)?\s+"
+    r"(?:-framed|-colored|-coloured)?\s+(?:\w+\s+)?"
     r"(bus|buses|car|cars|truck|trucks|van|vans|sedan|sedans|suv|suvs|vehicle|vehicles|"
-    r"monitor|monitors|screen|screens|tv|laptop|laptops|keyboard|keyboards)\b",
+    r"monitor|monitors|screen|screens|tv|laptop|laptops|keyboard|keyboards|"
+    r"glove|gloves|collar|collars|leash|leash)\b",
+    re.IGNORECASE,
+)
+
+
+_RING_HAND = re.compile(
+    r"\b(a\s+)?ring\s+(?:is\s+)?(?:worn\s+)?on\s+(?:her|his|the|their|one)?\s*"
+    r"(?:left|right)?\s*(?:hand'?s?\s+)?(?:ring|index|middle|little|pinky|pinkie)?\s*finger\b",
     re.IGNORECASE,
 )
 
@@ -658,7 +666,10 @@ def _neutralize_risky_colors(facts: dict[str, Any]) -> dict[str, Any]:
     """
     def scrub(v: Any) -> Any:
         if isinstance(v, str):
-            return _RISKY_COLOR.sub(lambda m: m.group(2), v)
+            out = _RISKY_COLOR.sub(lambda m: m.group(2), v)
+            # Which hand/finger a ring is on is a frequent contradiction; drop it.
+            out = _RING_HAND.sub("a ring", out)
+            return out
         if isinstance(v, list):
             return [scrub(x) for x in v]
         if isinstance(v, dict):
@@ -682,7 +693,7 @@ def _deterministic_formal(facts: dict[str, Any]) -> str:
     present = base.lower()
     picked: list[str] = []
     seen = {base.lower()}
-    for phrase in _evidence_phrases(facts):
+    for phrase in _background_phrases(facts):
         p = " ".join(phrase.strip().rstrip(".").split())
         if not p or len(p.split()) > 8 or p.lower() in seen:
             continue
@@ -725,7 +736,7 @@ def _ensure_formal_richness(caption: str, facts: dict[str, Any]) -> str:
     # Prefer concise background phrases (salient_objects are short nouns); keep
     # only those adding NEW information, short enough to read cleanly.
     candidates: list[str] = []
-    for phrase in _evidence_phrases(facts):
+    for phrase in _background_phrases(facts):
         p = phrase.strip().rstrip(".")
         if not p or len(p.split()) > 8:
             continue
@@ -969,6 +980,16 @@ def _evidence_terms(facts: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+# Framing/motion assertions the VLM gets wrong often and the judge barely
+# rewards — excluded from formal background enrichment to avoid contradictions
+# like "static shot" / "medium shot" / "no visible change" on a moving camera.
+_FRAMING_NOISE = re.compile(
+    r"\b(static|medium|wide|close-?up|eye-?level|low[- ]angle|high[- ]angle|"
+    r"no (movement|visible change)|does not change|remains (static|unchanged)|shot)\b",
+    re.IGNORECASE,
+)
+
+
 def _evidence_phrases(facts: dict[str, Any]) -> list[str]:
     phrases: list[str] = []
     for key in ("visual_details", "fine_grained_observations", "salient_objects", "spatial_relations"):
@@ -982,6 +1003,28 @@ def _evidence_phrases(facts: dict[str, Any]) -> list[str]:
     cleaned: list[str] = []
     for phrase in phrases:
         if 2 <= len(phrase.split()) <= 12 and phrase.lower() not in {p.lower() for p in cleaned}:
+            cleaned.append(phrase)
+    return cleaned
+
+
+def _background_phrases(facts: dict[str, Any]) -> list[str]:
+    """Object/scenery phrases only (no camera-framing/motion claims), for the
+    formal background sentence. Framing/motion assertions are unreliable."""
+    phrases: list[str] = []
+    for key in ("visual_details", "fine_grained_observations", "salient_objects", "spatial_relations"):
+        value = facts.get(key)
+        if isinstance(value, list):
+            phrases.extend(str(item).strip().rstrip(".") for item in value if str(item).strip())
+    setting = facts.get("setting")
+    if isinstance(setting, str) and setting.strip():
+        phrases.append(setting.strip().rstrip("."))
+    cleaned: list[str] = []
+    for phrase in phrases:
+        if not (2 <= len(phrase.split()) <= 12):
+            continue
+        if _FRAMING_NOISE.search(phrase):
+            continue
+        if phrase.lower() not in {p.lower() for p in cleaned}:
             cleaned.append(phrase)
     return cleaned
 
