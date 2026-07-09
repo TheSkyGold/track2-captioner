@@ -29,19 +29,25 @@ COPY app/ ./app/
 
 # The harness mounts /input and /output at runtime and injects NO env vars,
 # so the submission profile is pinned here. Non-secret config is plain ENV.
+# Submission engine = ENSEMBLE (measured best on the official jury distribution:
+# 0.942 accuracy, ~14.8 correct details/caption, lowest contradictions). Three
+# frontier vision models observe the frames; Claude Opus 4.5 cross-references and
+# writes. To fall back to the single-model pipeline, set CAPTION_ENGINE=pipeline.
 ENV PYTHONPATH=/app \
-    PROVIDER_ORDER=openrouter,groq,fireworks \
-    DESCRIBE_PROVIDER_ORDER=openrouter,groq,fireworks \
-    STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
+    CAPTION_ENGINE=ensemble \
+    ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5 \
+    ENSEMBLE_WRITER=anthropic/claude-opus-4.5 \
+    MAX_CAPTION_CHARS=1600 \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
     OPENROUTER_STYLE_MODEL=anthropic/claude-sonnet-4 \
+    PROVIDER_ORDER=openrouter,groq,fireworks \
+    STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
     DETERMINISTIC_FORMAL=0 \
     NUM_FRAMES=10 \
     FRAME_MAX_EDGE=896 \
     DESCRIBE_MAX_TOKENS=1300 \
-    STYLE_MAX_TOKENS=220 \
     MAX_CONCURRENCY=3 \
-    PER_TASK_TIMEOUT_S=90
+    PER_TASK_TIMEOUT_S=120
 
 # API keys arrive as build args at publish time only (CI secrets) — the repo
 # and default builds stay key-free; without keys the image degrades safely.

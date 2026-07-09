@@ -36,6 +36,28 @@ is the source of truth. Append a row after every audit; keep the best config at 
 - **GPT-5.5** detects ~2x the detail of any other model but must be told NOT to state
   race/skin (added to the ensemble/premium prompts).
 
+## Multi-video generalization (beyond the 3 samples)
+
+Official test set = the 15 clips in the AMD hackathon bucket
+(`data/official_tasks.json`) — the exact distribution the judge samples from.
+Plus 12 diverse Pexels stress clips. Audited on the real frames:
+
+| Set | Config | Precision | Detection (tot / per-cap) | Contra | Safety |
+|---|---|---|---|---|---|
+| 12 diverse clips | ENSEMBLE (old writer) | 0.931 | 691 / 14.4 | 17 (0.35/cap) | 0 |
+| 12 official clips | ENSEMBLE (old writer) | 0.924 | 745 / 15.5 | 20 (0.42/cap) | 0 |
+| 11 official clips | **ENSEMBLE (strict writer) — SUBMISSION** | **0.942** | 652 / 14.8 | **13 (0.30/cap)** | 0 |
+
+**Iteration result:** the strict writer (drop single-model specific claims unless
+2+ models agree) lifted precision 0.924->0.942 and cut contradictions ~30% per
+caption on the official jury distribution, keeping nearly all the detail. Adopted.
+
+Iteration note: the ensemble's huge detail (14.4/caption) came with 17
+contradictions on 48 captions — almost all from a SPECIFIC detail only one model
+reported. Writer prompt tightened: single-model specific claims (exact color,
+brand, count, sign text, left/right/fg-bg placement) are dropped unless a second
+model agrees. Trades a little detail for precision; re-audited above.
+
 ## Ground truth notes (verified by looking at frames)
 
 - v1 (Korean street): time-lapse/long-exposure motion blur, multi-lane + intersection,

@@ -47,15 +47,20 @@ OBSERVE_SYSTEM = (
 
 WRITE_SYSTEM = (
     "You are a world-class video-captioning writer. Several expert vision models each listed "
-    "what they saw in ONE clip; you receive all lists. Cross-reference them: a detail seen by "
-    "2+ models is high-confidence; use a single-model detail only if plausible and "
-    "uncontradicted. NEVER add anything no model reported. Write four captions of the SAME "
+    "what they saw in ONE clip; you receive all lists. Cross-reference them: a detail reported "
+    "by 2+ models is high-confidence - use those freely. A detail from only ONE model is "
+    "UNRELIABLE: include it ONLY if it is generic and safe; DROP any single-model SPECIFIC "
+    "claim (an exact color, a brand/logo, a count, sign/text, or a left/right or foreground/"
+    "background placement) unless another model agrees. When two models conflict, omit the "
+    "point. A wrong detail costs far more than a missing one - when in doubt, leave it out. "
+    "NEVER add anything no model reported. Write four captions of the SAME "
     "scene, one per style, richly detailed and vivid; do not state race/skin/eye color, do not "
     "quote an unreadable sign, attribute colors correctly. Styles: formal = professional, "
-    "objective, factual, no jokes/exclamations/1st-2nd person; sarcastic = dry ironic wit, no "
-    "tech jargon; humorous_tech = clever tech metaphors (API, latency, cache, pipeline, "
-    "runtime, server) tied to visible things; humorous_non_tech = warm everyday humor, NO tech "
-    "words. Return STRICT JSON only: "
+    "objective, factual, no jokes/exclamations/1st-2nd person; sarcastic = dry ironic wit "
+    "with ZERO technology words (no model, server, cache, commit, runtime, API, deploy, "
+    "pipeline, code, bug, latency); humorous_tech = clever tech metaphors (API, latency, "
+    "cache, pipeline, runtime, server) tied to visible things; humorous_non_tech = warm "
+    "everyday humor with ZERO technology words. Return STRICT JSON only: "
     '{"formal":"...","sarcastic":"...","humorous_tech":"...","humorous_non_tech":"..."}'
 )
 

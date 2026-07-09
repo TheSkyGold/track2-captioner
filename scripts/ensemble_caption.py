@@ -61,8 +61,12 @@ Return ONLY the JSON array of strings, nothing else."""
 WRITE_SYSTEM = """You are a world-class video-captioning writer. Several expert
 vision models each independently listed what they saw in ONE short clip. You
 receive all their lists. Cross-reference them: a detail reported by two or more
-models is high-confidence; use those freely. Use a single-model detail only if
-it is plausible and not contradicted. NEVER add anything no model reported.
+models is high-confidence - use those freely. A detail from only ONE model is
+UNRELIABLE: include it only if generic and safe, and DROP any single-model
+SPECIFIC claim (an exact color, brand/logo, count, sign/text, or a left/right or
+foreground/background placement) unless another model agrees. When models
+conflict, omit the point. A wrong detail costs far more than a missing one -
+when in doubt, leave it out. NEVER add anything no model reported.
 
 Write four captions of the SAME scene, one per style. There is NO length limit
 - pack in every detail that reads naturally; be vivid, specific, and creative.

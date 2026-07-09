@@ -90,10 +90,11 @@ SENSITIVE_APPEARANCE_TERMS = {
     "attractive",
     "ugly",
     "fat",
-    # ponytail: "thin" removed — it killed every "thin branches/cables/strips"
-    # caption the detail checklist encourages. Person-directed body remarks
-    # remain covered by the other terms and the style prompts.
-    "body",
+    # ponytail: "thin" and bare "body" removed — they false-matched "thin
+    # branches" and "body of water". Person-directed appearance risk is covered
+    # by the specific terms above plus "body shape" and the style safety prompt.
+    "body shape",
+    "body type",
 }
 LOW_TASTE_TERMS = {
     "cog",
@@ -104,9 +105,9 @@ LOW_TASTE_TERMS = {
     "beige machine",
     "gemstone",
     "snack table",
-    "probably",
-    "maybe",
-    "perhaps",
+    # ponytail: "probably"/"maybe"/"perhaps" removed — they are ordinary English
+    # that frontier writers use naturally in long captions; flagging them as
+    # low-taste forced good captions into generic fallbacks.
 }
 
 FALLBACK_CAPTIONS = {
