@@ -34,13 +34,14 @@ ENV PYTHONPATH=/app \
     DESCRIBE_PROVIDER_ORDER=openrouter,groq,fireworks \
     STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
-    OPENROUTER_STYLE_MODEL=google/gemma-3-27b-it \
+    OPENROUTER_STYLE_MODEL=anthropic/claude-sonnet-4 \
+    DETERMINISTIC_FORMAL=0 \
     NUM_FRAMES=10 \
     FRAME_MAX_EDGE=896 \
     DESCRIBE_MAX_TOKENS=1300 \
-    STYLE_MAX_TOKENS=180 \
+    STYLE_MAX_TOKENS=220 \
     MAX_CONCURRENCY=3 \
-    PER_TASK_TIMEOUT_S=75
+    PER_TASK_TIMEOUT_S=90
 
 # API keys arrive as build args at publish time only (CI secrets) — the repo
 # and default builds stay key-free; without keys the image degrades safely.

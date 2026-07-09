@@ -88,6 +88,7 @@ HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "20"))
 DESCRIBE_MAX_TOKENS = int(os.environ.get("DESCRIBE_MAX_TOKENS", "700"))
 STYLE_MAX_TOKENS = int(os.environ.get("STYLE_MAX_TOKENS", "140"))
 EVIDENCE_LOCK_ENABLED = os.environ.get("EVIDENCE_LOCK_ENABLED", "0") != "0"
+DETERMINISTIC_FORMAL = os.environ.get("DETERMINISTIC_FORMAL", "1") != "0"
 STYLE_CANDIDATES = max(1, int(os.environ.get("STYLE_CANDIDATES", "2")))
 STYLE_REPAIR_ENABLED = os.environ.get("STYLE_REPAIR_ENABLED", "1") != "0"
 
@@ -630,13 +631,16 @@ async def _style_one(facts: dict[str, Any], style: str) -> str:
     # facts are already rich and verified, so render formal deterministically
     # from them rather than let a style model compress/embellish it. The three
     # creative styles still go through the model (and keep the Gemma bonus).
-    if style == "formal":
+    if style == "formal" and DETERMINISTIC_FORMAL:
         deterministic = _deterministic_formal(facts)
         if _word_count(deterministic) >= 20:
             return deterministic
         return _ensure_formal_richness(await _call_style_provider(messages, style), facts)
 
-    return await _call_style_provider(messages, style)
+    caption = await _call_style_provider(messages, style)
+    if style == "formal":
+        caption = _ensure_formal_richness(caption, facts)
+    return caption
 
 
 _RISKY_COLOR = re.compile(
