@@ -500,24 +500,51 @@ async def _chat_content(payload: dict[str, Any]) -> str:
     return await _chat_content_at(FIREWORKS_BASE_URL, FIREWORKS_API_KEY, payload)
 
 
+# Groq's free tier bursts hard under concurrency: a transient 429 used to
+# collapse the whole describe stage to a generic stub (score ~0) because nothing
+# absorbed it. Retry 429s inline, honoring Retry-After, before surfacing the
+# error to the provider loop. tenacity still covers genuine transport errors.
+_MAX_429_RETRIES = int(os.environ.get("HTTP_429_RETRIES", "3"))
+_MAX_429_WAIT_S = float(os.environ.get("HTTP_429_MAX_WAIT_S", "8"))
+
+
+def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait after a 429: honor Retry-After, else back off, capped."""
+    hdr = (resp.headers.get("retry-after") or "").strip()
+    try:
+        wait = float(hdr)
+    except ValueError:
+        wait = 2.0  # ponytail: Retry-After can be an HTTP-date; 2s default is fine
+    return min(wait + attempt, _MAX_429_WAIT_S)
+
+
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_exponential_jitter(initial=0.5, max=3.0),
-    retry=retry_if_exception_type(httpx.HTTPError),
+    retry=retry_if_exception_type(httpx.TransportError),
     reraise=True,
 )
 async def _chat_content_at(base_url: str, api_key: str, payload: dict[str, Any]) -> str:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
-        r = await c.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
+        r: httpx.Response | None = None
+        for attempt in range(_MAX_429_RETRIES + 1):
+            r = await c.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if r.status_code == 429 and attempt < _MAX_429_RETRIES:
+                await asyncio.sleep(_retry_after_seconds(r, attempt))
+                continue
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+        # 429 never cleared — surface as HTTPStatusError so the provider loop
+        # (which catches httpx.HTTPError) fails over to the next model/provider.
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        raise httpx.HTTPStatusError("429 not cleared", request=r.request, response=r)
 
 
 async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
@@ -682,6 +709,23 @@ def _neutralize_risky_colors(facts: dict[str, Any]) -> dict[str, Any]:
     return {k: scrub(v) for k, v in facts.items()}
 
 
+_LEAD_DETERMINERS = {
+    "The", "A", "An", "Some", "Several", "Two", "Three", "Four", "This", "There", "Its", "Their",
+}
+
+
+def _lc_lead(phrase: str) -> str:
+    """Lowercase a leading determiner so a phrase reads cleanly mid-sentence.
+
+    "The desk is white" -> "the desk is white" when spliced into a list. Only
+    known determiners are touched, so acronyms/proper nouns (KOREA, TV) survive.
+    """
+    first = phrase.split(" ", 1)[0]
+    if first in _LEAD_DETERMINERS:
+        return phrase[0].lower() + phrase[1:]
+    return phrase
+
+
 def _deterministic_formal(facts: dict[str, Any]) -> str:
     """Assemble a rich, factual formal caption straight from the scene facts.
 
@@ -705,6 +749,7 @@ def _deterministic_formal(facts: dict[str, Any]) -> str:
             continue
         seen.add(p.lower())
         picked.append(p)
+        present += " " + p.lower()  # dedup later phrases against picked ones too
     joined = base + "."
     budget = 292 - len(joined) - len(" Also visible: .")
     kept: list[str] = []
@@ -717,6 +762,7 @@ def _deterministic_formal(facts: dict[str, Any]) -> str:
             break
     if not kept:
         return joined
+    kept = [_lc_lead(p) for p in kept]
     if len(kept) == 1:
         detail = kept[0]
     else:
@@ -766,6 +812,7 @@ def _ensure_formal_richness(caption: str, facts: dict[str, Any]) -> str:
             break
     if not picked:
         return caption
+    picked = [_lc_lead(p) for p in picked]
     detail = picked[0] if len(picked) == 1 else (
         f"{picked[0]} and {picked[1]}" if len(picked) == 2
         else f"{picked[0]}, {picked[1]}, and {picked[2]}"
