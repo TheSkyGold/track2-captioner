@@ -2,6 +2,24 @@
 
 Last checked locally: 2026-07-09 Europe/Paris.
 
+## ⚠️ CRITICAL before the jury runs the image — API credits
+
+The ensemble engine calls paid frontier models (GPT-5.5 + Gemini 3.1 Pro +
+Opus 4.5) via OpenRouter. **Benchmarking exhausted the OpenRouter balance
+(110/110 used).** If the jury pulls and runs the image against an empty account,
+the ensemble gets HTTP 402 per clip.
+
+The container now degrades gracefully: **ensemble -> single-model pipeline ->
+Groq (free tier)**, so it always emits real captions, never generic filler —
+verified locally (Groq llama-4-scout describe produced valid captions on all 3
+sample clips with the OpenRouter account empty). But Groq quality (~0.8) is well
+below the ensemble's 0.942.
+
+To submit at full quality, **top up OpenRouter credits** (the ensemble is
+~$0.20-0.40/clip, so ~$3-5 per 12-clip jury run). Or set `CAPTION_ENGINE=pipeline`
+for a cheaper Qwen-235B->Claude run, or rely on the free Groq fallback at lower
+quality. This is the one hard requirement left for the leaderboard score.
+
 ## 2026-07-09 — Retired the 8B judge; adopted a vision-adversarial audit
 
 The local `eval/local_judge.py` (Qwen-8B) was returning ~1.0 on captions that

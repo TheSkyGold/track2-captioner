@@ -66,11 +66,26 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
     async with sem:
         t0 = time.perf_counter()
         try:
-            engine = caption_ensemble if CAPTION_ENGINE == "ensemble" else caption_one_video
-            captions = await asyncio.wait_for(
-                engine(video_url=video_url, styles=styles),
-                timeout=PER_TASK_TIMEOUT_S,
-            )
+            if CAPTION_ENGINE == "ensemble":
+                try:
+                    captions = await asyncio.wait_for(
+                        caption_ensemble(video_url=video_url, styles=styles),
+                        timeout=PER_TASK_TIMEOUT_S,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    # Ensemble needs paid frontier APIs; on any failure (e.g. 402
+                    # out-of-credit) degrade to the single-model pipeline, which
+                    # itself falls back to Groq — never emit generic captions.
+                    log.warning("[%s] ensemble failed (%s); falling back to pipeline", task_id, e)
+                    captions = await asyncio.wait_for(
+                        caption_one_video(video_url=video_url, styles=styles),
+                        timeout=PER_TASK_TIMEOUT_S,
+                    )
+            else:
+                captions = await asyncio.wait_for(
+                    caption_one_video(video_url=video_url, styles=styles),
+                    timeout=PER_TASK_TIMEOUT_S,
+                )
         except asyncio.TimeoutError:
             log.warning("[%s] TIMEOUT after %.1fs - emitting fallback captions", task_id, PER_TASK_TIMEOUT_S)
             captions = _empty_caption_set(styles)
