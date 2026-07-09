@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -81,8 +82,9 @@ def check_row(row: dict, errs: list[str]) -> None:
         if not isinstance(cap, str) or not cap.strip():
             _fail(errs, f"[{tid}/{style}] caption empty or not a string")
             continue
-        if len(cap) > 300:
-            _fail(errs, f"[{tid}/{style}] caption too long ({len(cap)} chars)")
+        max_chars = int(os.environ.get("MAX_CAPTION_CHARS", "300"))
+        if len(cap) > max_chars:
+            _fail(errs, f"[{tid}/{style}] caption too long ({len(cap)} > {max_chars} chars)")
         if not _looks_english(cap):
             _fail(errs, f"[{tid}/{style}] caption does not look English/ASCII-safe")
 
