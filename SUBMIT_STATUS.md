@@ -190,7 +190,7 @@ detail") and the product story reward. **v9 is the submission candidate.**
 Worst clip wall time 60s; 12 clips ≈ 6 min at concurrency 2 — inside the
 10-min budget with margin.
 
-GitHub: private repo `devopsm3/track2-captioner` (public at submission day),
+GitHub: private repo `TheSkyGold/track2-captioner` (public at submission day),
 CI green (offline preflight + linux/amd64 Docker build + filter guards).
 
 ## Proven Locally
