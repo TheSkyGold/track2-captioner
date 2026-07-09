@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
+
+# Hard length cap for a caption. 300 suits the concise pipeline; the ensemble
+# engine writes long richly-detailed captions, so it raises this via env.
+MAX_CAPTION_CHARS = int(os.environ.get("MAX_CAPTION_CHARS", "300"))
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
@@ -283,9 +288,9 @@ def _clean_caption(text: str) -> str:
         or (text.startswith("'") and text.endswith("'"))
     ):
         text = text[1:-1].strip()
-    if len(text) > 300:
+    if len(text) > MAX_CAPTION_CHARS:
         # Cut at the last full sentence under the cap, never mid-word.
-        head = text[:300]
+        head = text[:MAX_CAPTION_CHARS]
         sentence_end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
         if sentence_end > 80:
             head = head[: sentence_end + 1]

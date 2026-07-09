@@ -33,6 +33,9 @@ from app.models import (
     validate_results,
 )
 from app.pipeline import caption_one_video
+from app.ensemble import caption_ensemble
+
+CAPTION_ENGINE = os.environ.get("CAPTION_ENGINE", "pipeline")
 
 INPUT_PATH = Path(os.environ.get("INPUT_PATH", "/input/tasks.json"))
 OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
@@ -63,8 +66,9 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
     async with sem:
         t0 = time.perf_counter()
         try:
+            engine = caption_ensemble if CAPTION_ENGINE == "ensemble" else caption_one_video
             captions = await asyncio.wait_for(
-                caption_one_video(video_url=video_url, styles=styles),
+                engine(video_url=video_url, styles=styles),
                 timeout=PER_TASK_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
