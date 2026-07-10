@@ -96,6 +96,12 @@ _BANNER_NOTE = (
     "duration): use it to ground WHEN things happen, but NEVER describe the banner "
     "itself as scene content. "
 ) if os.environ.get("TIMESTAMP_FRAMES", "0") != "0" else ""
+if os.environ.get("TIMESTAMP_TEXT", "0") != "0" and not _BANNER_NOTE:
+    _BANNER_NOTE = (
+        "Each frame is preceded by a text label giving its timestamp within the clip: "
+        "use the timestamps to describe WHEN things happen and what changes over time "
+        "(early vs late in the clip), but never mention the labels themselves. "
+    )
 
 OBSERVE_SYSTEM = (
     "You are a meticulous visual analyst. You see frames sampled in order from ONE short "
@@ -151,9 +157,23 @@ async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any
     return r.json()["choices"][0]["message"]["content"]
 
 
-def _frames_content(frames: list[Path]) -> list[dict]:
-    content: list[dict] = [{"type": "text", "text": "Frames in order:"}]
-    for fp in frames:
+TIMESTAMP_TEXT = os.environ.get("TIMESTAMP_TEXT", "0") != "0"
+
+
+def _frames_content(frames: list[Path], times: list[float] | None = None,
+                    duration: float | None = None) -> list[dict]:
+    # Leader-validated (0.9117): timestamps as ADJACENT TEXT parts, frames stay
+    # pristine - no drawtext banner occluding pixels (the v18 mistake).
+    header = "Frames in order:"
+    if times and duration:
+        header = (f"Frames sampled in order from a {int(duration//60)}:{int(duration%60):02d} "
+                  "clip. Each frame is preceded by its timestamp.")
+    content: list[dict] = [{"type": "text", "text": header}]
+    for i, fp in enumerate(frames):
+        if times and i < len(times):
+            t = times[i]
+            content.append({"type": "text",
+                            "text": f"Frame {i+1}/{len(frames)} at {int(t//60)}:{int(t%60):02d}:"})
         b64 = base64.b64encode(fp.read_bytes()).decode("ascii")
         content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
     return content
@@ -192,10 +212,12 @@ def _compress_for_video_observer(video: Path, workdir: Path) -> str | None:
 
 
 async def caption_ensemble_frames(
-    frames: list[Path], styles: list[str], video_b64: str | None = None
+    frames: list[Path], styles: list[str], video_b64: str | None = None,
+    times: list[float] | None = None, duration: float | None = None,
 ) -> dict[str, str]:
     """Run the observe->cross-reference->write ensemble on already-extracted frames."""
-    content = _frames_content(frames)
+    content = _frames_content(frames, times if TIMESTAMP_TEXT else None,
+                              duration if TIMESTAMP_TEXT else None)
     async with httpx.AsyncClient(timeout=httpx.Timeout(240.0)) as client:
         async def observe(model: str) -> tuple[str, list[str]]:
             try:
@@ -328,7 +350,15 @@ async def caption_ensemble(video_url: str, styles: list[str]) -> dict[str, str]:
         wd = Path(tmp)
         vp = await P._download(video_url, wd / "clip.mp4")
         frames = P._extract_keyframes(vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE)
+        # Same formula as _extract_uniform_frames (scene-detect is disabled in
+        # the submission profile, so indexes line up 1:1 with the frames).
+        duration = P._ffprobe_duration(vp)
+        if duration <= 0:
+            duration = 60.0
+        step = max(duration / (len(frames) + 1), 0.1)
+        times = [round((i + 1) * step, 1) for i in range(len(frames))]
         video_b64 = None
         if VIDEO_OBSERVER:
             video_b64 = await asyncio.to_thread(_compress_for_video_observer, vp, wd)
-        return await caption_ensemble_frames(frames, styles, video_b64)
+        return await caption_ensemble_frames(frames, styles, video_b64,
+                                             times=times, duration=duration)
