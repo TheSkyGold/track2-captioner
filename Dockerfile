@@ -43,6 +43,7 @@ ENV PYTHONPATH=/app \
     PROVIDER_ORDER=openrouter,groq,fireworks \
     STYLE_PROVIDER_ORDER=openrouter,fireworks,groq \
     STYLE_MODEL=accounts/fireworks/models/gpt-oss-120b \
+    STYLE_REASONING_EFFORT=low \
     STYLE_MAX_TOKENS=1400 \
     DETERMINISTIC_FORMAL=1 \
     NUM_FRAMES=10 \

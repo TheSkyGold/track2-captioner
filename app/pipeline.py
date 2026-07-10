@@ -847,6 +847,9 @@ def _ensure_formal_richness(caption: str, facts: dict[str, Any]) -> str:
     return f"{joined} In the background, {detail}."
 
 
+STYLE_REASONING_EFFORT = os.environ.get("STYLE_REASONING_EFFORT", "")
+
+
 async def _call_style_provider(messages: list[dict[str, Any]], style: str) -> str:
     last_error: Exception | None = None
     for provider in _provider_order("style"):
@@ -858,6 +861,11 @@ async def _call_style_provider(messages: list[dict[str, Any]], style: str) -> st
                 "temperature": 0.7 if style != "formal" else 0.3,
                 "max_tokens": STYLE_MAX_TOKENS,
             }
+            # gpt-oss on Fireworks: low effort keeps reasoning out of the token
+            # budget (empty-content risk) and cuts latency ~3x. Fireworks-only —
+            # other providers may reject unknown params.
+            if provider == "fireworks" and STYLE_REASONING_EFFORT:
+                payload["reasoning_effort"] = STYLE_REASONING_EFFORT
             try:
                 return _extract_final_caption(await _chat_content_at(base_url, api_key, payload))
             except httpx.HTTPError as e:
