@@ -283,14 +283,28 @@ async def caption_ensemble_frames(
                             '"humorous_non_tech":"..."}'
                         ),
                     }]
-                    sel_raw = await _call(
-                        client, SELECTOR_MODEL,
+                    sel_system = (
                         "You are a grounded multimodal caption selector. You compare "
                         "candidate captions against video frames and pick, per style, "
                         "the most accurate and most detailed one. You never rewrite "
-                        "captions - you copy the winner verbatim.",
-                        sel_content, 3000, temperature=0.1)
-                    picked = _parse_obj(sel_raw)
+                        "captions - you copy the winner verbatim.")
+                    # Gemini occasionally returns empty content on large
+                    # multimodal payloads: retry once, then fall back to the
+                    # writer model as selector before giving up.
+                    picked = None
+                    for sel_model in (SELECTOR_MODEL, SELECTOR_MODEL, WRITER):
+                        try:
+                            sel_raw = await _call(client, sel_model, sel_system,
+                                                  sel_content, 3000, temperature=0.1)
+                            if sel_raw and "{" in sel_raw:
+                                picked = _parse_obj(sel_raw)
+                                break
+                            log.warning("selector %s returned no JSON (len=%d)",
+                                        sel_model, len(sel_raw or ""))
+                        except Exception as e:  # noqa: BLE001
+                            log.warning("selector %s call failed: %s", sel_model, e)
+                    if picked is None:
+                        raise RuntimeError("all selector attempts failed")
                     # Guard: only accept selector output that echoes a real candidate
                     # (verbatim or near) - otherwise it silently became a writer.
                     def _match(style: str, text: str) -> str:
