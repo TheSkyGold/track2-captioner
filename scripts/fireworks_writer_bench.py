@@ -80,7 +80,7 @@ for m in MODELS:
         print(f"{m:16s} {s:18s} ok={ok} {dt:5.1f}s {err} :: {cap[:90]}")
     results[m] = rows
 
-json.dump(results, open("out/fw_writer_bench.json", "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+json.dump(results, open("out/fireworks_writer_bench.json", "w", encoding="utf-8"), indent=1, ensure_ascii=False)
 print("\nSUMMARY (pass/4, avg latency):")
 for m, rows in results.items():
     npass = sum(r["ok"] for r in rows)
