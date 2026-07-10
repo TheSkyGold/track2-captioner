@@ -45,6 +45,24 @@ EXEMPLARS = os.environ.get("STYLE_EXEMPLARS", "0") != "0"
 # catches temporal actions and changes frames miss. The Track 2 leader feeds
 # Gemini actual video; Gemini via OpenRouter accepts data:video/mp4 input.
 VIDEO_OBSERVER = os.environ.get("VIDEO_OBSERVER", "")  # e.g. google/gemini-3.1-pro-preview
+# Some writers (Gemini) default to terse captions; long rich ones score better
+# with the official judge (measured 0.89 long vs 0.84 concise). Optional hint.
+WRITER_LENGTH_HINT = os.environ.get("WRITER_LENGTH_HINT", "")
+# Severe 2-axis panel diagnosis: accuracy=0.79 is the weak axis (style=0.92),
+# the writer invents specifics (fake collars, buses, manicures). This flips
+# grounding from "rich+vivid" to "only what was observed", and drops writer
+# temperature to curb invention.
+STRICT_GROUNDING = os.environ.get("STRICT_GROUNDING", "0") != "0"
+WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
+_GROUNDING_RULE = (
+    "\n\nSTRICT GROUNDING (accuracy is scored hardest): every concrete noun, colour, "
+    "count, vehicle/animal/object TYPE, action, and piece of text you write MUST appear "
+    "in at least one observation list above. If a vivid detail is not in the lists, DO NOT "
+    "write it - describe only what was observed. Do NOT invent motivations, greetings, "
+    "clothing, jewelry, breeds, vehicle types, or signage. A shorter fully-grounded caption "
+    "beats a rich one with one invented detail. Before returning, re-read each caption and "
+    "delete any specific that is not supported by the observations."
+)
 _EXEMPLAR_BLOCK = (
     "\n\nTONE EXAMPLES - these describe DIFFERENT videos; copy the VOICE, never the content:\n"
     'formal: "A commuter train crosses an elevated bridge at dusk, its lit windows reflected '
@@ -98,13 +116,14 @@ WRITE_SYSTEM = (
 )
 
 
-async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any, max_tokens: int) -> str:
+async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any,
+                max_tokens: int, temperature: float = 0.5) -> str:
     r = await client.post(
         f"{OR_URL}/chat/completions",
         headers={"Authorization": f"Bearer {OR_KEY}", "Content-Type": "application/json"},
         json={"model": model, "messages": [
             {"role": "system", "content": system}, {"role": "user", "content": content}],
-            "temperature": 0.5, "max_tokens": max_tokens},
+            "temperature": temperature, "max_tokens": max_tokens},
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
@@ -189,8 +208,11 @@ async def caption_ensemble_frames(
             "Independent observation lists from several vision models for ONE clip. "
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
         )
-        system = WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "") + (_EXEMPLAR_BLOCK if EXEMPLARS else "")
-        raw = await _call(client, WRITER, system, write_content, 2000)
+        system = (WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "")
+                  + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
+                  + (_GROUNDING_RULE if STRICT_GROUNDING else "")
+                  + (_EXEMPLAR_BLOCK if EXEMPLARS else ""))
+        raw = await _call(client, WRITER, system, write_content, 2000, temperature=WRITER_TEMP)
         caps = _parse_obj(raw)
     return {k: str(caps.get(k, "")) for k in styles}
 
