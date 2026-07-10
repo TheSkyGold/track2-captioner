@@ -294,7 +294,10 @@ async def caption_ensemble_frames(
             caps = cand[0]
             if len(cand) > 1:
                 try:
-                    sel_content = list(content) + [{
+                    # Selector payload: 5 pristine frames, no timestamp labels -
+                    # Gemini returns empty content on the full 21-part payload.
+                    sel_frames = frames[::2] if len(frames) > 6 else frames
+                    sel_content = _frames_content(sel_frames) + [{
                         "type": "text",
                         "text": (
                             "Above are the frames of the clip. Candidate caption sets "
