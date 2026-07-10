@@ -145,13 +145,17 @@ WRITE_SYSTEM = (
 
 
 async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any,
-                max_tokens: int, temperature: float = 0.5) -> str:
+                max_tokens: int, temperature: float = 0.5,
+                timeout_s: float | None = None) -> str:
+    # Per-stage deadline: without it one slow provider eats the whole 150s task
+    # budget and the run degrades to the single-model fallback (short captions).
     r = await client.post(
         f"{OR_URL}/chat/completions",
         headers={"Authorization": f"Bearer {OR_KEY}", "Content-Type": "application/json"},
         json={"model": model, "messages": [
             {"role": "system", "content": system}, {"role": "user", "content": content}],
             "temperature": temperature, "max_tokens": max_tokens},
+        timeout=timeout_s if timeout_s else httpx.USE_CLIENT_DEFAULT,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
@@ -221,7 +225,8 @@ async def caption_ensemble_frames(
     async with httpx.AsyncClient(timeout=httpx.Timeout(240.0)) as client:
         async def observe(model: str) -> tuple[str, list[str]]:
             try:
-                return model, _parse_list(await _call(client, model, OBSERVE_SYSTEM, content, 4000))
+                return model, _parse_list(await _call(client, model, OBSERVE_SYSTEM,
+                                                      content, 4000, timeout_s=70.0))
             except Exception as e:  # noqa: BLE001
                 log.warning("observer %s failed: %s", model, e)
                 return model, []
@@ -264,7 +269,7 @@ async def caption_ensemble_frames(
             for attempt in range(2):
                 try:
                     raw = await _call(client, WRITER, system, write_content, 3000,
-                                      temperature=WRITER_TEMP)
+                                      temperature=WRITER_TEMP, timeout_s=60.0)
                     break
                 except (httpx.HTTPStatusError, httpx.TransportError) as e:
                     if attempt == 1:
@@ -314,10 +319,15 @@ async def caption_ensemble_frames(
                     # multimodal payloads: retry once, then fall back to the
                     # writer model as selector before giving up.
                     picked = None
+                    sel_t0 = asyncio.get_event_loop().time()
                     for sel_model in (SELECTOR_MODEL, SELECTOR_MODEL, WRITER):
+                        if asyncio.get_event_loop().time() - sel_t0 > 55.0:
+                            log.warning("selector budget (55s) exhausted")
+                            break
                         try:
                             sel_raw = await _call(client, sel_model, sel_system,
-                                                  sel_content, 3000, temperature=0.1)
+                                                  sel_content, 3000, temperature=0.1,
+                                                  timeout_s=35.0)
                             if sel_raw and "{" in sel_raw:
                                 picked = _parse_obj(sel_raw)
                                 break
