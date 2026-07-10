@@ -15,17 +15,19 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 REQUIRED_STYLES = ("formal", "sarcastic", "humorous_tech", "humorous_non_tech")
 VALID_STYLES = set(REQUIRED_STYLES)
 TECH_KEYWORDS = {
+    # ponytail: everyday-collision words removed (queue/merge/logs/bug/server/
+    # model/commit/error) - traffic queues, merging lanes, fallen logs, garden
+    # bugs and restaurant servers kept nuking rich captions. The writer prompt
+    # already bans tech senses; this list is only a net for hard jargon.
     "api",
     "algorithm",
     "algorithms",
     "backend",
-    "bug",
     "cache",
     "ci",
     "ci/cd",
     "code",
     "coding",
-    "commit",
     "compile",
     "cpu",
     "database",
@@ -45,9 +47,6 @@ TECH_KEYWORDS = {
     "kubernetes",
     "latency",
     "llm",
-    "logs",
-    "merge",
-    "model",
     "npm",
     "pipeline",
     "programming",
@@ -56,15 +55,11 @@ TECH_KEYWORDS = {
     "python",
     "regex",
     "rollback",
-    "server",
-    "servers",
     "software",
     "sql",
     "staging",
-    "queue",
     "scheduler",
     "runtime",
-    "error",
 }
 TECH_PHRASES = {
     "24 fps",
