@@ -4,6 +4,33 @@ Dockerized video-captioning agent for Track 2. It reads `/input/tasks.json`,
 generates four styled English captions per clip, and writes
 `/output/results.json`.
 
+## Run it in 60 seconds (judges start here)
+
+```bash
+docker pull ghcr.io/theskygold/track2-captioner:latest
+docker run --rm \
+  -v /path/to/input:/input \
+  -v /path/to/output:/output \
+  ghcr.io/theskygold/track2-captioner:latest
+```
+
+Public image, linux/amd64, 0.25 GB compressed, keys baked at build time —
+nothing to configure. `/input/tasks.json` in, `/output/results.json` out,
+all four styles always present and validated.
+
+## Caption YOUR own video (beyond the sample clips)
+
+```bash
+pip install -r requirements.txt
+python -m app.webapp        # -> http://127.0.0.1:8799
+```
+
+Paste any direct `.mp4` URL or upload a local file; get the four styled
+captions in about a minute. Uses the full ensemble when API credits are
+available and degrades automatically to the free-tier pipeline when they are
+not — verified end-to-end on out-of-sample videos (`eval/BENCHMARK_LOG.md`
+includes 12 Pexels stress clips beyond the official set).
+
 ## Architecture
 
 **Submission engine = a vision-model ENSEMBLE** (`CAPTION_ENGINE=ensemble`).
