@@ -51,6 +51,9 @@ input[type=text]{width:70%}button{background:#4fd1b5;color:#04211b;font-weight:7
 .s{color:#78a6ff;font-weight:700;font-size:12px;text-transform:uppercase}
 .row{display:flex;gap:10px;align-items:center;margin:8px 0;flex-wrap:wrap}
 #out{margin-top:18px}.muted{color:#a9b4c0;font-size:13px}.err{color:#ff6f6f}
+.split{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.split video{width:420px;max-width:100%;border-radius:10px;border:1px solid #303b48;background:#000;position:sticky;top:12px}
+.split .caps{flex:1;min-width:300px}
 </style>
 <h1>Track 2 - Caption any video</h1>
 <p class=muted>Ensemble of frontier vision models writes four styled captions. Paste a direct video URL (.mp4) or upload a file.</p>
@@ -58,12 +61,14 @@ input[type=text]{width:70%}button{background:#4fd1b5;color:#04211b;font-weight:7
 <div class=row><input id=file type=file accept="video/*"><button onclick=goFile()>Caption upload</button></div>
 <div id=out></div>
 <script>
-async function render(p){const o=document.getElementById('out');o.innerHTML='<p class=muted>Analyzing with the model ensemble... (~1 min)</p>';
- try{const r=await p;const d=await r.json();if(d.error){o.innerHTML='<p class=err>'+d.error+'</p>';return;}
- o.innerHTML=Object.entries(d.captions).map(([s,c])=>'<div class=card><div class=s>'+s+'</div>'+c+'</div>').join('');}
- catch(e){o.innerHTML='<p class=err>'+e+'</p>';}}
-function go(){const u=document.getElementById('url').value;render(fetch('/caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})}));}
-function goFile(){const f=document.getElementById('file').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);render(fetch('/caption',{method:'POST',body:fd}));}
+async function render(p,videoSrc){const o=document.getElementById('out');
+ o.innerHTML='<div class=split>'+(videoSrc?'<video src="'+videoSrc+'" controls autoplay muted loop></video>':'')+'<div class=caps><p class=muted>Analyzing... (~1 min)</p></div></div>';
+ const caps=o.querySelector('.caps');
+ try{const r=await p;const d=await r.json();if(d.error){caps.innerHTML='<p class=err>'+d.error+'</p>';return;}
+ caps.innerHTML=Object.entries(d.captions).map(([s,c])=>'<div class=card><div class=s>'+s+'</div>'+c+'</div>').join('');}
+ catch(e){caps.innerHTML='<p class=err>'+e+'</p>';}}
+function go(){const u=document.getElementById('url').value;render(fetch('/caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})}),u);}
+function goFile(){const f=document.getElementById('file').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);render(fetch('/caption',{method:'POST',body:fd}),URL.createObjectURL(f));}
 </script>"""
 
 
