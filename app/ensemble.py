@@ -84,11 +84,18 @@ _CONCISE_RULE = (
     "pack the strongest verified details - vivid and specific, not a long paragraph."
 )
 
+# Banner sentence only when frames actually carry the drawtext overlay -
+# telling observers about a nonexistent banner invites phantom-timing claims.
+_BANNER_NOTE = (
+    "Each frame carries a small overlay banner (frame number, timestamp, "
+    "duration): use it to ground WHEN things happen, but NEVER describe the banner "
+    "itself as scene content. "
+) if os.environ.get("TIMESTAMP_FRAMES", "0") != "0" else ""
+
 OBSERVE_SYSTEM = (
     "You are a meticulous visual analyst. You see frames sampled in order from ONE short "
-    "video clip. Each frame carries a small overlay banner (frame number, timestamp, "
-    "duration): use it to ground WHEN things happen, but NEVER describe the banner "
-    "itself as scene content. Return a JSON array of SHORT strings, one per concrete detail you can "
+    "video clip. " + _BANNER_NOTE +
+    "Return a JSON array of SHORT strings, one per concrete detail you can "
     "verify across the frames. Be EXHAUSTIVE: every subject and appearance (hairstyle, "
     "clothing layers+colors, jewelry, nails, animal coat/markings, chest/paw color), every "
     "object, actions and motion (what changes, direction), setting, background structures "
@@ -97,6 +104,11 @@ OBSERVE_SYSTEM = (
     "sign unless the letters are unambiguous (say 'an unreadable sign'). Attribute a color "
     "only to the object it truly belongs to. Express positions in VIEWER terms only "
     "('on the left of the frame'), NEVER as the subject's own left/right. "
+    "Do not infer an exact city, country, brand, or organization from logos, transit "
+    "systems, license plates, architecture, or partial signs unless the name itself is "
+    "clearly and fully readable; if an exact place is not directly visible, use generic "
+    "wording (a city street, an office, a garden). When something is uncertain, state "
+    "the uncertainty itself ('exact city uncertain') - NEVER a guessed answer. "
     "Return ONLY the JSON array."
 )
 
