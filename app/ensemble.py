@@ -55,13 +55,16 @@ WRITER_LENGTH_HINT = os.environ.get("WRITER_LENGTH_HINT", "")
 STRICT_GROUNDING = os.environ.get("STRICT_GROUNDING", "0") != "0"
 WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
 _GROUNDING_RULE = (
-    "\n\nSTRICT GROUNDING (accuracy is scored hardest): every concrete noun, colour, "
-    "count, vehicle/animal/object TYPE, action, and piece of text you write MUST appear "
-    "in at least one observation list above. If a vivid detail is not in the lists, DO NOT "
-    "write it - describe only what was observed. Do NOT invent motivations, greetings, "
-    "clothing, jewelry, breeds, vehicle types, or signage. A shorter fully-grounded caption "
-    "beats a rich one with one invented detail. Before returning, re-read each caption and "
-    "delete any specific that is not supported by the observations."
+    "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
+    "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
+    "you write MUST appear in at least one observation list above. Do NOT invent "
+    "motivations, greetings, clothing, jewelry, breeds, vehicle types, or signage. "
+    "At the same time, COVER AS MANY well-supported observations as possible - subjects, "
+    "actions, setting, background, lighting, motion: a caption that omits observed key "
+    "elements loses as many points as one that invents them. Replace every invented "
+    "specific with a REAL one from the lists, never by deleting richness. Before "
+    "returning, re-read each caption: remove unsupported specifics AND add any important "
+    "observed element still missing."
 )
 _EXEMPLAR_BLOCK = (
     "\n\nTONE EXAMPLES - these describe DIFFERENT videos; copy the VOICE, never the content:\n"
