@@ -23,16 +23,11 @@ TECH_KEYWORDS = {
     "algorithm",
     "algorithms",
     "backend",
-    "cache",
     "ci",
     "ci/cd",
-    "code",
     "coding",
-    "compile",
     "cpu",
     "database",
-    "deploy",
-    "deploys",
     "developer",
     "docker",
     "frontend",
@@ -43,19 +38,19 @@ TECH_KEYWORDS = {
     # ponytail: "it" (the pronoun) was here — a top-frequency English word that
     # false-flagged most sarcastic/humorous_non_tech captions as tech jargon and
     # forced hardcoded fallbacks. "IT" as a domain term isn't worth that damage.
+    # Likewise cache/code/compile/deploy(s)/pipeline/python/staging moved to
+    # TECH_DETECT_EXTRA: acorn caches, dress codes, python snakes and peacocks
+    # deploying tails were nuking rich captions on the ANIMALS category.
     "javascript",
     "kubernetes",
     "latency",
     "llm",
     "npm",
-    "pipeline",
     "programming",
-    "python",
     "regex",
     "rollback",
     "software",
     "sql",
-    "staging",
     "scheduler",
     "runtime",
 }
@@ -66,7 +61,6 @@ TECH_PHRASES = {
     "eventual consistency",
     "hot reload",
     "hot-reload",
-    "merge conflict",
     "null check",
     "pull request",
 }
@@ -79,16 +73,22 @@ SENSITIVE_APPEARANCE_TERMS = {
     "racial",
     "skin tone",
     "disability",
-    "disabled",
     "attractive",
     "ugly",
-    "fat",
-    # ponytail: "thin" and bare "body" removed — they false-matched "thin
-    # branches" and "body of water". Person-directed appearance risk is covered
-    # by the specific terms above plus "body shape" and the style safety prompt.
+    # ponytail: bare "fat"/"disabled" moved to the person-directed regex below —
+    # they nuked "fat cat" and "a disabled truck on the shoulder"; the risk is
+    # only when the word targets a PERSON.
+    # "thin" and bare "body" removed — they false-matched "thin branches" and
+    # "body of water". Person-directed appearance risk is covered by the
+    # specific terms above plus "body shape" and the style safety prompt.
     "body shape",
     "body type",
 }
+_PERSON_APPEARANCE = re.compile(
+    r"\b(fat|obese|disabled|handicapped)\s+"
+    r"(man|men|woman|women|person|people|guy|guys|lady|ladies|boy|boys|girl|girls|kid|kids|child|children)\b",
+    re.IGNORECASE,
+)
 LOW_TASTE_TERMS: set[str] = set()
 # ponytail: emptied - the old entries (squirrel, rat, cog, specimen,
 # 'existential dread'...) were overfit to one bad batch and kept nuking
@@ -250,8 +250,11 @@ def fallback_caption(style: str, facts: dict[str, Any] | None = None) -> str:
 # the meaning (user-caught: mouse said "to her left", actually on her right).
 # Frame-relative phrasing ("left of the frame") is fine; subject-relative is
 # unverifiable from frames, so neutralize it to "beside".
+# "\bto" only: "at/on her right" is posture ("lying on its right side"), not a
+# direction claim, and the old (?:to|at|on) matched the "to" INSIDE "onto",
+# garbling "rolls onto its right side" into "rolls onbeside it".
 _SUBJ_DIR = re.compile(
-    r"(?:positioned\s+|located\s+|sitting\s+|placed\s+)?(?:to|at|on)\s+"
+    r"(?:positioned\s+|located\s+|sitting\s+|placed\s+)?\bto\s+"
     r"(her|his|their|its)\s+(?:left|right)(?:\s+side)?\b",
     re.IGNORECASE,
 )
@@ -311,10 +314,17 @@ def _clean_caption(text: str) -> str:
     return text.strip()
 
 
-# Words with a legit everyday sense ("a grand production", "prod someone") that
-# still COUNT as a tech reference when required, but must never NUKE a
-# sarcastic/non-tech caption. Ban list and require list are asymmetric.
-TECH_DETECT_EXTRA = {"production", "prod"}
+# Words with a legit everyday sense ("a grand production", "python glides",
+# "cache of acorns", "the peacock deploys its tail") that still COUNT as a tech
+# reference when required, but must never NUKE a sarcastic/non-tech caption.
+# Ban list and require list are asymmetric. deployment/telemetry/downtime/server
+# added so captions echoing the humorous_tech exemplar vocabulary pass the
+# require-side check instead of falling back to a template.
+TECH_DETECT_EXTRA = {
+    "production", "prod",
+    "cache", "code", "compile", "deploy", "deploys", "pipeline", "python", "staging",
+    "deployment", "deployments", "telemetry", "downtime", "server", "servers",
+}
 
 
 def _tech_words(text: str) -> set[str]:
@@ -372,6 +382,8 @@ def _mentions_sensitive_appearance(text: str) -> bool:
     # the judge penalizes appearance/identity remarks, so catch those phrases
     # even though "dark skin" is not a single banned word.
     if _SKIN_COLOR.search(text):
+        return True
+    if _PERSON_APPEARANCE.search(text):
         return True
     return _matches_term_list(text, SENSITIVE_APPEARANCE_TERMS)
 
@@ -453,6 +465,17 @@ def normalize_captions(
         if text and not caption_passes_style_filter(style, text):
             repaired = strip_uncertainty_fillers(text)
             if repaired != text and caption_passes_style_filter(style, repaired):
+                text = repaired
+        if (
+            text
+            and style in ("formal", "sarcastic")
+            and not caption_passes_style_filter(style, text)
+            and style_filter_reason(style, text) == "exclamation"
+        ):
+            # Repair the punctuation instead of swapping a rich caption for a
+            # zero-content template: '!' is the ONLY failing check here.
+            repaired = re.sub(r"!+", ".", text)
+            if caption_passes_style_filter(style, repaired):
                 text = repaired
         if not text or too_short or not caption_passes_style_filter(style, text):
             reason = (

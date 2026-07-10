@@ -217,7 +217,20 @@ async def caption_ensemble_frames(
                   + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
                   + (_GROUNDING_RULE if STRICT_GROUNDING else "")
                   + (_EXEMPLAR_BLOCK if EXEMPLARS else ""))
-        raw = await _call(client, WRITER, system, write_content, 2000, temperature=WRITER_TEMP)
+        # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
+        # discards the whole ensemble. One retry on transient writer failure -
+        # cheaper than the alternative (a full 150s single-model pipeline rerun).
+        raw = ""
+        for attempt in range(2):
+            try:
+                raw = await _call(client, WRITER, system, write_content, 3000,
+                                  temperature=WRITER_TEMP)
+                break
+            except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                if attempt == 1:
+                    raise
+                log.warning("writer attempt 1 failed (%s), retrying once", e)
+                await asyncio.sleep(2)
         caps = _parse_obj(raw)
     return {k: str(caps.get(k, "")) for k in styles}
 
