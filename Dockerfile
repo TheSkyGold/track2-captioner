@@ -54,9 +54,13 @@ ENV PYTHONPATH=/app \
     HTTP_429_MAX_WAIT_S=45 \
     RETRY_AFTER_GIVEUP_S=60 \
     DESCRIBE_MAX_TOKENS=1300 \
-    MAX_CONCURRENCY=3 \
+    SCENE_DETECT_ENABLED=0 \
+    MAX_CONCURRENCY=2 \
     PER_TASK_TIMEOUT_S=150 \
     GLOBAL_BUDGET_S=540
+# Judging VM = 2 vCPU / 4 GB RAM (Participant Guide p.5). Scene-detection
+# decodes the ENTIRE UHD clip per video and three parallel ffmpeg passes
+# thrash 2 cores into the 10-minute wall - uniform -ss seeks are near-free.
 
 # API keys arrive as build args at publish time only (CI secrets) — the repo
 # and default builds stay key-free; without keys the image degrades safely.
