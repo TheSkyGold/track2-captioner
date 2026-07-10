@@ -42,6 +42,7 @@ ENV PYTHONPATH=/app \
     STRICT_GROUNDING=0 \
     WRITER_TEMP=0.5 \
     TIMESTAMP_FRAMES=0 \
+    WRITER_LENGTH_HINT="COVERAGE TARGET: captions score on how much correct observed detail they cover. Aim for roughly 1100-1500 characters for formal and 800-1200 for the other styles, reached by covering MORE of the agreed observations - the clip's opening/middle/ending progression, setting, weather and lighting, subject counts and appearances, each distinct action, background elements, camera framing and movement, and clearly readable text - never by padding, repeating, or inventing." \
     MAX_CAPTION_CHARS=1600 \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
     OPENROUTER_STYLE_MODEL=google/gemma-4-31b-it \
