@@ -50,8 +50,6 @@ TECH_KEYWORDS = {
     "npm",
     "pipeline",
     "programming",
-    "prod",
-    "production",
     "python",
     "regex",
     "rollback",
@@ -313,15 +311,30 @@ def _clean_caption(text: str) -> str:
     return text.strip()
 
 
-def _has_tech_jargon(text: str) -> bool:
-    low = text.lower()
-    if any(phrase in low for phrase in TECH_PHRASES):
-        return True
-    words = {
+# Words with a legit everyday sense ("a grand production", "prod someone") that
+# still COUNT as a tech reference when required, but must never NUKE a
+# sarcastic/non-tech caption. Ban list and require list are asymmetric.
+TECH_DETECT_EXTRA = {"production", "prod"}
+
+
+def _tech_words(text: str) -> set[str]:
+    return {
         token.strip(".,!?;:()[]{}\"'`").lower()
         for token in text.replace("/", " ").replace("-", " ").split()
     }
-    return bool(words & TECH_KEYWORDS)
+
+
+def _has_tech_jargon(text: str) -> bool:
+    """Strict check used to BAN tech words in sarcastic/humorous_non_tech."""
+    low = text.lower()
+    if any(phrase in low for phrase in TECH_PHRASES):
+        return True
+    return bool(_tech_words(text) & TECH_KEYWORDS)
+
+
+def _has_tech_reference(text: str) -> bool:
+    """Looser check used to REQUIRE a tech reference in humorous_tech."""
+    return _has_tech_jargon(text) or bool(_tech_words(text) & TECH_DETECT_EXTRA)
 
 
 def _has_first_second_person(text: str) -> bool:
@@ -385,7 +398,7 @@ def style_filter_reason(style: str, caption: str) -> str:
         return "low_taste_term"
     if style == "humorous_non_tech" and _has_tech_jargon(caption):
         return "tech_jargon_banned"
-    if style == "humorous_tech" and not _has_tech_jargon(caption):
+    if style == "humorous_tech" and not _has_tech_reference(caption):
         return "missing_tech_term"
     if style in {"formal", "sarcastic"} and "!" in caption:
         return "exclamation"
@@ -406,7 +419,7 @@ def caption_passes_style_filter(style: str, caption: str) -> bool:
     if style == "humorous_non_tech":
         return not _has_tech_jargon(caption)
     if style == "humorous_tech":
-        return _has_tech_jargon(caption)
+        return _has_tech_reference(caption)
     if style == "formal":
         return "!" not in caption and not _has_first_second_person(caption)
     if style == "sarcastic":

@@ -6,7 +6,7 @@ filter, which would silently reject good sarcastic / humorous_non_tech captions.
 """
 from __future__ import annotations
 
-from app.models import _has_tech_jargon, caption_passes_style_filter, fallback_caption
+from app.models import _has_tech_jargon, _has_tech_reference, caption_passes_style_filter, fallback_caption
 
 # Everyday captions that legitimately use words a bad tech filter over-matches.
 CLEAN = [
@@ -37,7 +37,7 @@ def demo() -> None:
         assert caption_passes_style_filter("sarcastic", cap), f"sarcastic rejected: {cap!r}"
         assert caption_passes_style_filter("humorous_non_tech", cap), f"non_tech rejected: {cap!r}"
     for cap in TECH:
-        assert _has_tech_jargon(cap), f"missed real tech reference: {cap!r}"
+        assert _has_tech_reference(cap), f"missed real tech reference: {cap!r}"
         assert caption_passes_style_filter("humorous_tech", cap), f"tech rejected: {cap!r}"
     assert caption_passes_style_filter("humorous_tech", RACE_OK), f"race-condition rejected: {RACE_OK!r}"
     # Regression: substring matching once made 'cat' match 'located', firing
