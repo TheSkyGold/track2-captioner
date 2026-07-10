@@ -84,9 +84,11 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
         try:
             if CAPTION_ENGINE == "ensemble":
                 try:
+                    # Cap the ensemble attempt so the pipeline fallback still
+                    # fits inside this task's slot (no 150s+150s doubling).
                     captions = await asyncio.wait_for(
                         caption_ensemble(video_url=video_url, styles=styles),
-                        timeout=task_timeout,
+                        timeout=min(task_timeout, 100),
                     )
                 except Exception as e:  # noqa: BLE001
                     # Ensemble needs paid frontier APIs; on any failure (e.g. 402
@@ -136,16 +138,38 @@ async def _amain() -> int:
 
     log.info("Loaded %d task(s) from %s", len(tasks_in), INPUT_PATH)
 
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-    results = await asyncio.gather(*(_run_one(sem, t) for t in tasks_in))
-
+    # A hard kill at the 10-minute mark must never leave us unscored: write a
+    # complete, valid results.json with styled fallbacks IMMEDIATELY, then
+    # rewrite it after every finished task. Whatever instant the harness reads
+    # the file, it is valid JSON covering every task.
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    validated = validate_results(results)
-    OUTPUT_PATH.write_text(
-        json.dumps(validated, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    log.info("Wrote %d result(s) -> %s", len(results), OUTPUT_PATH)
+    results_by_id: dict[str, dict[str, Any]] = {}
+    for t in tasks_in:
+        tid = t.get("task_id", "?")
+        styles = t.get("styles") or list(REQUIRED_STYLES)
+        results_by_id[tid] = {"task_id": tid, "captions": normalize_captions(_empty_caption_set(styles), styles)}
+    write_lock = asyncio.Lock()
+
+    def _flush() -> None:
+        tmp = OUTPUT_PATH.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(validate_results(list(results_by_id.values())), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(OUTPUT_PATH)
+
+    _flush()
+
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+
+    async def _run_and_flush(task: dict[str, Any]) -> None:
+        res = await _run_one(sem, task)
+        results_by_id[res["task_id"]] = res
+        async with write_lock:
+            _flush()
+
+    await asyncio.gather(*(_run_and_flush(t) for t in tasks_in))
+    log.info("Wrote %d result(s) -> %s", len(results_by_id), OUTPUT_PATH)
     return 0
 
 

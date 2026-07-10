@@ -109,7 +109,9 @@ async def caption_one_video(video_url: str, styles: list[str]) -> dict[str, str]
             if EVIDENCE_LOCK_ENABLED:
                 normalized = await _repair_with_sibling_context(normalized, facts, styles)
             return normalize_captions(normalized, styles, facts)
-        frames = _extract_keyframes(video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE)
+        frames = await asyncio.to_thread(
+            _extract_keyframes, video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE
+        )
         # Audio transcript is optional but strongly boosts humorous_tech / non_tech
         # scores (jokes live in the voice track). Left as a hook — enable Whisper
         # if you ship it in the image.
@@ -613,6 +615,7 @@ async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
             }
         )
 
+    describe_reasoning = os.environ.get("DESCRIBE_REASONING_EFFORT", "")
     last_error: Exception | None = None
     for provider in _provider_order("describe"):
         base_url, api_key, models = _provider_endpoint(provider)
@@ -644,6 +647,10 @@ async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
                 "max_tokens": max(DESCRIBE_MAX_TOKENS, 2200) if provider == "fireworks" else DESCRIBE_MAX_TOKENS,
                 "response_format": {"type": "json_object"},
             }
+            # kimi-k2p6 on Fireworks is vision-capable but leaks chain-of-thought
+            # unless reasoning is disabled outright.
+            if provider == "fireworks" and describe_reasoning:
+                payload["reasoning_effort"] = describe_reasoning
             try:
                 text = await _chat_content_at(base_url, api_key, payload)
                 obj = _extract_json_object(text)

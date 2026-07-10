@@ -111,7 +111,9 @@ def _parse_obj(text: str) -> dict:
 async def caption_ensemble_frames(frames: list[Path], styles: list[str]) -> dict[str, str]:
     """Run the observe->cross-reference->write ensemble on already-extracted frames."""
     content = _frames_content(frames)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(240.0)) as client:
+    # 60s per call: a stalled frontier generation must not eat a whole task
+    # slot (observers normally answer in 10-30s; the writer in 15-40s).
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
         async def observe(model: str) -> tuple[str, list[str]]:
             try:
                 return model, _parse_list(await _call(client, model, OBSERVE_SYSTEM, content, 4000))
@@ -141,5 +143,9 @@ async def caption_ensemble(video_url: str, styles: list[str]) -> dict[str, str]:
     with tempfile.TemporaryDirectory() as tmp:
         wd = Path(tmp)
         vp = await P._download(video_url, wd / "clip.mp4")
-        frames = P._extract_keyframes(vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE)
+        # ffmpeg seeks are subprocess.run calls: off the event loop, or they
+        # block every other task's timers on the 2-vCPU judging VM.
+        frames = await asyncio.to_thread(
+            P._extract_keyframes, vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE
+        )
         return await caption_ensemble_frames(frames, styles)
