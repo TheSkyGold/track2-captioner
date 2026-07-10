@@ -44,6 +44,16 @@ OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
 PER_TASK_TIMEOUT_S = float(os.environ.get("PER_TASK_TIMEOUT_S", "25"))
 # Max concurrent videos processed in parallel. Keep low to avoid rate limits.
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "3"))
+# The judging harness kills the WHOLE run at 10 minutes; a partially-degraded
+# score beats a TIMEOUT (observed: stalled provider retries ran the clock out
+# and the submission was marked unscored). Tasks that would start or run past
+# this budget emit styled fallbacks instead.
+GLOBAL_BUDGET_S = float(os.environ.get("GLOBAL_BUDGET_S", "540"))
+_RUN_T0 = time.monotonic()
+
+
+def _remaining_budget() -> float:
+    return GLOBAL_BUDGET_S - (time.monotonic() - _RUN_T0)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,12 +75,18 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
 
     async with sem:
         t0 = time.perf_counter()
+        # Never run past the global budget: shrink this task's timeout to what
+        # is left, and skip straight to fallbacks when the budget is spent.
+        task_timeout = min(PER_TASK_TIMEOUT_S, _remaining_budget())
+        if task_timeout < 10:
+            log.warning("[%s] global budget spent - emitting fallback captions", task_id)
+            return {"task_id": task_id, "captions": normalize_captions(_empty_caption_set(styles), styles)}
         try:
             if CAPTION_ENGINE == "ensemble":
                 try:
                     captions = await asyncio.wait_for(
                         caption_ensemble(video_url=video_url, styles=styles),
-                        timeout=PER_TASK_TIMEOUT_S,
+                        timeout=task_timeout,
                     )
                 except Exception as e:  # noqa: BLE001
                     # Ensemble needs paid frontier APIs; on any failure (e.g. 402
@@ -79,15 +95,15 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
                     log.warning("[%s] ensemble failed (%s); falling back to pipeline", task_id, e)
                     captions = await asyncio.wait_for(
                         caption_one_video(video_url=video_url, styles=styles),
-                        timeout=PER_TASK_TIMEOUT_S,
+                        timeout=min(PER_TASK_TIMEOUT_S, _remaining_budget()),
                     )
             else:
                 captions = await asyncio.wait_for(
                     caption_one_video(video_url=video_url, styles=styles),
-                    timeout=PER_TASK_TIMEOUT_S,
+                    timeout=task_timeout,
                 )
         except asyncio.TimeoutError:
-            log.warning("[%s] TIMEOUT after %.1fs - emitting fallback captions", task_id, PER_TASK_TIMEOUT_S)
+            log.warning("[%s] TIMEOUT after %.1fs - emitting fallback captions", task_id, task_timeout)
             captions = _empty_caption_set(styles)
         except Exception as e:  # noqa: BLE001 - never let one clip take the run down
             log.exception("[%s] pipeline failed: %s", task_id, e)

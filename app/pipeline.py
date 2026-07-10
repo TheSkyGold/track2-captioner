@@ -507,15 +507,25 @@ async def _chat_content(payload: dict[str, Any]) -> str:
 # error to the provider loop. tenacity still covers genuine transport errors.
 _MAX_429_RETRIES = int(os.environ.get("HTTP_429_RETRIES", "3"))
 _MAX_429_WAIT_S = float(os.environ.get("HTTP_429_MAX_WAIT_S", "8"))
+# If the provider says the quota is gone for longer than this (e.g. Groq daily
+# limit answers retry-after 600+), retrying inside the request budget is
+# pointless: fail over to the next provider immediately instead of stalling.
+_RETRY_AFTER_GIVEUP_S = float(os.environ.get("RETRY_AFTER_GIVEUP_S", "60"))
 
 
 def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
-    """Seconds to wait after a 429: honor Retry-After, else back off, capped."""
+    """Seconds to wait after a 429: honor Retry-After, else back off, capped.
+
+    Returns -1 when the advertised wait exceeds the give-up threshold —
+    the caller should stop retrying and surface the error immediately.
+    """
     hdr = (resp.headers.get("retry-after") or "").strip()
     try:
         wait = float(hdr)
     except ValueError:
         wait = 2.0  # ponytail: Retry-After can be an HTTP-date; 2s default is fine
+    if wait > _RETRY_AFTER_GIVEUP_S:
+        return -1.0
     return min(wait + attempt, _MAX_429_WAIT_S)
 
 
@@ -538,7 +548,10 @@ async def _chat_content_at(base_url: str, api_key: str, payload: dict[str, Any])
                 json=payload,
             )
             if r.status_code == 429 and attempt < _MAX_429_RETRIES:
-                await asyncio.sleep(_retry_after_seconds(r, attempt))
+                wait = _retry_after_seconds(r, attempt)
+                if wait < 0:  # provider quota gone for minutes — fail over now
+                    break
+                await asyncio.sleep(wait)
                 continue
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()

@@ -49,5 +49,34 @@ def _run() -> None:
     print("OK: 429x2 -> 200 recovered; content =", repr(out), "; sleeps =", slept)
 
 
+def _run_giveup() -> None:
+    """A 429 advertising a minutes-long wait must fail over instantly."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"retry-after": "600"}, json={})
+
+    transport = httpx.MockTransport(handler)
+    orig_client = httpx.AsyncClient
+    httpx.AsyncClient = lambda *a, **k: orig_client(transport=transport)
+    slept: list[float] = []
+    orig_sleep = asyncio.sleep
+
+    async def fake_sleep(s: float) -> None:
+        slept.append(s)
+
+    asyncio.sleep = fake_sleep
+    try:
+        try:
+            asyncio.run(P._chat_content_at("http://x", "k", {"model": "m", "messages": []}))
+            raise AssertionError("expected HTTPStatusError")
+        except httpx.HTTPStatusError:
+            pass
+    finally:
+        httpx.AsyncClient = orig_client
+        asyncio.sleep = orig_sleep
+    assert slept == [], f"expected NO sleeps on retry-after 600, got {slept}"
+    print("OK: 429 with retry-after=600 fails over immediately (no sleeps)")
+
+
 if __name__ == "__main__":
     _run()
+    _run_giveup()
