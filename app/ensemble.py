@@ -40,6 +40,22 @@ _CONCISE_RULE = (
     " LENGTH: write each caption as 2-3 dense sentences (about 40-60 words) that "
     "pack the strongest verified details - vivid and specific, not a long paragraph."
 )
+# Tone-only few-shot exemplars on deliberately UNRELATED content. A competitor
+# measured this exact trick lifting judged accuracy 0.64->0.75 and style
+# 0.82->0.89: the writer hears the voice without content to leak.
+EXEMPLARS = os.environ.get("STYLE_EXEMPLARS", "0") != "0"
+_EXEMPLAR_BLOCK = (
+    "\n\nTONE EXAMPLES - these describe DIFFERENT videos; copy the VOICE, never the content:\n"
+    'formal: "A commuter train crosses an elevated bridge at dusk, its lit windows reflected '
+    'in the river below as traffic passes along the embankment road."\n'
+    'sarcastic: "Ah yes, a dog has caught a frisbee mid-air - truly the pinnacle of athletic '
+    "achievement, and judging by that tail, nobody has ever been prouder of anything.\"\n"
+    'humorous_tech: "This golden retriever executes a flawless mid-air catch - a zero-downtime '
+    'deployment of pure enthusiasm, with tail-wag telemetry reporting all systems nominal."\n'
+    'humorous_non_tech: "A golden retriever catches the frisbee like it\'s auditioning for its '
+    'own sports documentary, then victory-laps the yard as if the neighbors paid admission."\n'
+    "Write as if you personally watched the clip."
+)
 
 OBSERVE_SYSTEM = (
     "You are a meticulous visual analyst. You see frames sampled in order from ONE short "
@@ -66,7 +82,9 @@ WRITE_SYSTEM = (
     "NEVER add anything no model reported. Write four captions of the SAME "
     "scene, one per style, richly detailed and vivid; do not state race/skin/eye color, do not "
     "quote an unreadable sign, attribute colors correctly. Positions: use viewer terms "
-    "('on the left of the frame'), NEVER the subject's own left/right ('to her left'). Styles: formal = professional, "
+    "('on the left of the frame'), NEVER the subject's own left/right ('to her left'). "
+    "Only assert lighting effects (light streaks, glows, headlight/taillight trails, "
+    "reflections) when they are unmistakably visible - never as a time-lapse cliche. Styles: formal = professional, "
     "objective, factual, no jokes/exclamations/1st-2nd person; sarcastic = dry ironic wit "
     "with ZERO technology words (no model, server, cache, commit, runtime, API, deploy, "
     "pipeline, code, bug, latency); humorous_tech = clever tech metaphors (API, latency, "
@@ -132,7 +150,7 @@ async def caption_ensemble_frames(frames: list[Path], styles: list[str]) -> dict
             "Independent observation lists from several vision models for ONE clip. "
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
         )
-        system = WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "")
+        system = WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "") + (_EXEMPLAR_BLOCK if EXEMPLARS else "")
         raw = await _call(client, WRITER, system, write_content, 2000)
         caps = _parse_obj(raw)
     return {k: str(caps.get(k, "")) for k in styles}
