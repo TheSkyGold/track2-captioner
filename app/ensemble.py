@@ -54,6 +54,11 @@ WRITER_LENGTH_HINT = os.environ.get("WRITER_LENGTH_HINT", "")
 # temperature to curb invention.
 STRICT_GROUNDING = os.environ.get("STRICT_GROUNDING", "0") != "0"
 WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
+# Grounded candidate selection (leader-validated): sample CANDIDATE_SETS full
+# caption sets, then SELECTOR_MODEL re-sees the frames and copies out the most
+# grounded+richest caption per style. Both unset = exact previous behavior.
+CANDIDATE_SETS = int(os.environ.get("CANDIDATE_SETS", "1"))
+SELECTOR_MODEL = os.environ.get("ENSEMBLE_SELECTOR", "")
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
     "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
@@ -232,18 +237,74 @@ async def caption_ensemble_frames(
         # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
         # discards the whole ensemble. One retry on transient writer failure -
         # cheaper than the alternative (a full 150s single-model pipeline rerun).
-        raw = ""
-        for attempt in range(2):
-            try:
-                raw = await _call(client, WRITER, system, write_content, 3000,
-                                  temperature=WRITER_TEMP)
-                break
-            except (httpx.HTTPStatusError, httpx.TransportError) as e:
-                if attempt == 1:
-                    raise
-                log.warning("writer attempt 1 failed (%s), retrying once", e)
-                await asyncio.sleep(2)
-        caps = _parse_obj(raw)
+        async def write_once() -> dict | None:
+            raw = ""
+            for attempt in range(2):
+                try:
+                    raw = await _call(client, WRITER, system, write_content, 3000,
+                                      temperature=WRITER_TEMP)
+                    break
+                except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                    if attempt == 1:
+                        raise
+                    log.warning("writer attempt 1 failed (%s), retrying once", e)
+                    await asyncio.sleep(2)
+            return _parse_obj(raw)
+
+        n_sets = max(1, CANDIDATE_SETS)
+        if n_sets == 1 or not SELECTOR_MODEL:
+            caps = await write_once()
+        else:
+            # Grounded selection (leader-validated at 0.9117): sample several
+            # full caption sets at temp 0.5, then ONE independent multimodal
+            # call re-sees the frames and picks the most grounded caption per
+            # style. Any selector failure falls back to the first set.
+            sets = await asyncio.gather(*(write_once() for _ in range(n_sets)),
+                                        return_exceptions=True)
+            cand = [s for s in sets if isinstance(s, dict) and s]
+            if not cand:
+                raise RuntimeError("all writer candidate sets failed")
+            caps = cand[0]
+            if len(cand) > 1:
+                try:
+                    sel_content = list(content) + [{
+                        "type": "text",
+                        "text": (
+                            "Above are the frames of the clip. Candidate caption sets "
+                            "(JSON):\n" + json.dumps({f"set_{i+1}": c for i, c in enumerate(cand)})
+                            + "\n\nFor EACH style (formal, sarcastic, humorous_tech, "
+                            "humorous_non_tech), select the candidate that is the most "
+                            "factually accurate against the frames AND covers the most "
+                            "correct observable detail. Reject any caption asserting "
+                            "something the frames do not support; among accurate ones "
+                            "prefer the RICHEST. Copy the winning caption text EXACTLY - "
+                            "do not edit, shorten, or rewrite it. Return STRICT JSON: "
+                            '{"formal":"...","sarcastic":"...","humorous_tech":"...",'
+                            '"humorous_non_tech":"..."}'
+                        ),
+                    }]
+                    sel_raw = await _call(
+                        client, SELECTOR_MODEL,
+                        "You are a grounded multimodal caption selector. You compare "
+                        "candidate captions against video frames and pick, per style, "
+                        "the most accurate and most detailed one. You never rewrite "
+                        "captions - you copy the winner verbatim.",
+                        sel_content, 3000, temperature=0.1)
+                    picked = _parse_obj(sel_raw)
+                    # Guard: only accept selector output that echoes a real candidate
+                    # (verbatim or near) - otherwise it silently became a writer.
+                    def _match(style: str, text: str) -> str:
+                        for c in cand:
+                            if str(c.get(style, "")).strip() == text.strip():
+                                return text
+                        return ""
+                    merged = {}
+                    for style in ("formal", "sarcastic", "humorous_tech", "humorous_non_tech"):
+                        best = _match(style, str(picked.get(style, "")))
+                        merged[style] = best or str(caps.get(style, ""))
+                    caps = merged
+                except Exception as e:  # noqa: BLE001
+                    log.warning("selector failed (%s) - using first candidate set", e)
     return {k: str(caps.get(k, "")) for k in styles}
 
 
