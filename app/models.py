@@ -91,19 +91,12 @@ SENSITIVE_APPEARANCE_TERMS = {
     "body shape",
     "body type",
 }
-LOW_TASTE_TERMS = {
-    "cog",
-    "existential dread",
-    "specimen",
-    "squirrel",
-    "rat",
-    "beige machine",
-    "gemstone",
-    "snack table",
-    # ponytail: "probably"/"maybe"/"perhaps" removed — they are ordinary English
-    # that frontier writers use naturally in long captions; flagging them as
-    # low-taste forced good captions into generic fallbacks.
-}
+LOW_TASTE_TERMS: set[str] = set()
+# ponytail: emptied - the old entries (squirrel, rat, cog, specimen,
+# 'existential dread'...) were overfit to one bad batch and kept nuking
+# perfect captions: the hidden set has an ANIMALS category (literal squirrels
+# and rats), and mild sarcasm cliches are not judged as low taste. Real safety
+# lives in the sensitive-appearance and skin-color filters.
 
 FALLBACK_CAPTIONS = {
     "formal": "The clip shows visible people or objects, movement, foreground elements, background context, and camera framing in a clearly observable setting.",
