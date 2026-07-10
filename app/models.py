@@ -266,10 +266,16 @@ def _clean_caption(text: str) -> str:
         "\u2019": "'",
         "\u201c": '"',
         "\u201d": '"',
+        "\u2010": "-",
+        "\u2011": "-",  # non-breaking hyphen (gpt-oss writes these) \u2014 was silently
+        "\u2012": "-",  # deleted by the ascii-ignore below, gluing words together
         "\u2013": "-",
         "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
         "\u2026": "...",
         "\u00a0": " ",
+        "\u202f": " ",
         # mojibake: UTF-8 punctuation misdecoded as latin-1 (\u2026 ' ' - -)
         "\u00e2\u20ac\u00a6": "...",
         "\u00e2\u20ac\u2122": "'",

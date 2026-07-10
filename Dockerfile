@@ -41,13 +41,19 @@ ENV PYTHONPATH=/app \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
     OPENROUTER_STYLE_MODEL=anthropic/claude-sonnet-4 \
     PROVIDER_ORDER=openrouter,groq,fireworks \
-    STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
-    DETERMINISTIC_FORMAL=0 \
+    STYLE_PROVIDER_ORDER=openrouter,fireworks,groq \
+    STYLE_MODEL=accounts/fireworks/models/gpt-oss-120b \
+    STYLE_MAX_TOKENS=1400 \
+    DETERMINISTIC_FORMAL=1 \
     NUM_FRAMES=10 \
     FRAME_MAX_EDGE=896 \
+    GROQ_MAX_IMAGES=4 \
+    GROQ_FRAME_MAX_EDGE=448 \
+    HTTP_429_RETRIES=5 \
+    HTTP_429_MAX_WAIT_S=45 \
     DESCRIBE_MAX_TOKENS=1300 \
-    MAX_CONCURRENCY=3 \
-    PER_TASK_TIMEOUT_S=120
+    MAX_CONCURRENCY=2 \
+    PER_TASK_TIMEOUT_S=150
 
 # API keys arrive as build args at publish time only (CI secrets) — the repo
 # and default builds stay key-free; without keys the image degrades safely.

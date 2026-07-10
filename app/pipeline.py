@@ -63,6 +63,7 @@ GROQ_VISION_MODEL = os.environ.get(
     "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
 )
 GROQ_MAX_IMAGES = int(os.environ.get("GROQ_MAX_IMAGES", "5"))
+GROQ_FRAME_MAX_EDGE = int(os.environ.get("GROQ_FRAME_MAX_EDGE", "512"))
 OPENROUTER_VLM_MODEL = os.environ.get(
     "OPENROUTER_VLM_MODEL", "qwen/qwen3-vl-8b-instruct"
 )
@@ -547,6 +548,26 @@ async def _chat_content_at(base_url: str, api_key: str, payload: dict[str, Any])
         raise httpx.HTTPStatusError("429 not cleared", request=r.request, response=r)
 
 
+def _shrink_image_part(part: dict[str, Any], max_edge: int) -> dict[str, Any]:
+    """Re-encode a base64 image content part to fit max_edge (JPEG q80)."""
+    try:
+        import io
+        from PIL import Image
+        url = part["image_url"]["url"]
+        b64 = url.split(",", 1)[1]
+        img = Image.open(io.BytesIO(base64.b64decode(b64)))
+        if max(img.size) <= max_edge:
+            return part
+        img.thumbnail((max_edge, max_edge))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, "JPEG", quality=80)
+        small = base64.b64encode(buf.getvalue()).decode("ascii")
+        return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{small}"}}
+    except Exception as e:  # noqa: BLE001 - shrinking is an optimization, never fatal
+        log.warning("frame shrink failed (%s); sending original", e)
+        return part
+
+
 async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
     """Ask the VLM for a structured JSON summary of the clip."""
     if not any(_provider_endpoint(provider)[1] for provider in _provider_order("describe")):
@@ -584,7 +605,13 @@ async def _describe(frames: list[Path], transcript_hint: str) -> dict[str, Any]:
         base_url, api_key, models = _provider_endpoint(provider)
         provider_content = content
         if provider == "groq":
-            provider_content = [content[0], *content[1 : 1 + GROQ_MAX_IMAGES]]
+            # Groq free tier meters image tokens hard: 5 frames at 896px blow the
+            # TPM limit and every describe 429s into the generic stub. Cap frame
+            # count AND resolution for Groq only (other providers keep full size).
+            provider_content = [content[0], *(
+                _shrink_image_part(p, GROQ_FRAME_MAX_EDGE)
+                for p in content[1 : 1 + GROQ_MAX_IMAGES]
+            )]
         for model in models:
             payload = {
                 "model": model,
