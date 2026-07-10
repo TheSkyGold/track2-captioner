@@ -36,7 +36,7 @@ COPY app/ ./app/
 # writes. To fall back to the single-model pipeline, set CAPTION_ENGINE=pipeline.
 ENV PYTHONPATH=/app \
     CAPTION_ENGINE=ensemble \
-    ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5 \
+    ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5,qwen/qwen3-vl-235b-a22b-instruct \
     ENSEMBLE_WRITER=anthropic/claude-opus-4.5 \
     STYLE_EXEMPLARS=1 \
     STRICT_GROUNDING=0 \
