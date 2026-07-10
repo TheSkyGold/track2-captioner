@@ -452,13 +452,24 @@ def _extract_uniform_frames(
     prefix: str,
 ) -> list[Path]:
     step = max(duration / (n + 1), 0.1)
+    # FRAME_ANCHOR=1: span 2%..98% of the clip instead of 9%..91%, so the
+    # opening and closing moments (entrances/exits, first/last state) are
+    # actually sampled. Pure coverage, same frame count, zero added latency.
+    anchor = os.environ.get("FRAME_ANCHOR", "0") != "0"
+    times: list[float] = []
+    for i in range(1, n + 1):
+        if anchor and n > 1:
+            frac = 0.02 + 0.96 * (i - 1) / (n - 1)
+            times.append(round(max(0.1, duration * frac), 3))
+        else:
+            times.append(round(i * step, 3))
     out_paths: list[Path] = []
     # Burn frame#/timestamp/duration into each frame (TIMESTAMP_FRAMES=1):
     # observers gain temporal grounding ("at 0:15 the bus enters") - the
     # leaderboard leader's single biggest measured lever.
     stamp = os.environ.get("TIMESTAMP_FRAMES", "0") != "0"
     for i in range(1, n + 1):
-        t = round(i * step, 3)
+        t = times[i - 1]
         out = workdir / f"{prefix}{i:02d}.jpg"
         vf = f"scale='min({max_edge},iw)':-2"
         if stamp:

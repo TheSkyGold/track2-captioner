@@ -380,8 +380,13 @@ async def caption_ensemble(video_url: str, styles: list[str]) -> dict[str, str]:
         duration = P._ffprobe_duration(vp)
         if duration <= 0:
             duration = 60.0
-        step = max(duration / (len(frames) + 1), 0.1)
-        times = [round((i + 1) * step, 1) for i in range(len(frames))]
+        n = len(frames)
+        if os.environ.get("FRAME_ANCHOR", "0") != "0" and n > 1:
+            times = [round(max(0.1, duration * (0.02 + 0.96 * i / (n - 1))), 1)
+                     for i in range(n)]
+        else:
+            step = max(duration / (n + 1), 0.1)
+            times = [round((i + 1) * step, 1) for i in range(n)]
         video_b64 = None
         if VIDEO_OBSERVER:
             video_b64 = await asyncio.to_thread(_compress_for_video_observer, vp, wd)
