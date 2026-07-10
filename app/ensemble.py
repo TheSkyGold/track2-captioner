@@ -41,6 +41,10 @@ CONCISE = os.environ.get("ENSEMBLE_CONCISE", "0") != "0"
 # measured (+0.07 style, +0.11 acc for them); our A/B on 4 hard official clips:
 # FINAL 0.944 -> 0.967. The writer hears the voice, no content can leak.
 EXEMPLARS = os.environ.get("STYLE_EXEMPLARS", "0") != "0"
+# 4th observer that watches the REAL VIDEO (compressed), not sampled frames -
+# catches temporal actions and changes frames miss. The Track 2 leader feeds
+# Gemini actual video; Gemini via OpenRouter accepts data:video/mp4 input.
+VIDEO_OBSERVER = os.environ.get("VIDEO_OBSERVER", "")  # e.g. google/gemini-3.1-pro-preview
 _EXEMPLAR_BLOCK = (
     "\n\nTONE EXAMPLES - these describe DIFFERENT videos; copy the VOICE, never the content:\n"
     'formal: "A commuter train crosses an elevated bridge at dusk, its lit windows reflected '
@@ -126,7 +130,29 @@ def _parse_obj(text: str) -> dict:
     return json.loads(text[text.find("{"): text.rfind("}") + 1])
 
 
-async def caption_ensemble_frames(frames: list[Path], styles: list[str]) -> dict[str, str]:
+def _compress_for_video_observer(video: Path, workdir: Path) -> str | None:
+    """Re-encode to a small MP4 and return base64, or None if too large/fails."""
+    import subprocess
+    out = workdir / "obs_video.mp4"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(video),
+             "-vf", "scale=640:-2", "-r", "4", "-c:v", "libx264", "-preset", "veryfast",
+             "-crf", "32", "-an", str(out)],
+            check=True, timeout=90,
+        )
+        raw = out.read_bytes()
+        if len(raw) > 14_000_000:  # keep the request well under provider caps
+            return None
+        return base64.b64encode(raw).decode("ascii")
+    except Exception as e:  # noqa: BLE001
+        log.warning("video-observer compression failed: %s", e)
+        return None
+
+
+async def caption_ensemble_frames(
+    frames: list[Path], styles: list[str], video_b64: str | None = None
+) -> dict[str, str]:
     """Run the observe->cross-reference->write ensemble on already-extracted frames."""
     content = _frames_content(frames)
     async with httpx.AsyncClient(timeout=httpx.Timeout(240.0)) as client:
@@ -137,7 +163,22 @@ async def caption_ensemble_frames(frames: list[Path], styles: list[str]) -> dict
                 log.warning("observer %s failed: %s", model, e)
                 return model, []
 
-        obs = await asyncio.gather(*[observe(m) for m in OBSERVERS])
+        async def observe_video(model: str) -> tuple[str, list[str]]:
+            vid_content = [
+                {"type": "text", "text": "The full video clip:"},
+                {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
+            ]
+            try:
+                return f"{model} (video)", _parse_list(
+                    await _call(client, model, OBSERVE_SYSTEM, vid_content, 4000))
+            except Exception as e:  # noqa: BLE001
+                log.warning("video observer %s failed: %s", model, e)
+                return model, []
+
+        observers = [observe(m) for m in OBSERVERS]
+        if VIDEO_OBSERVER and video_b64:
+            observers.append(observe_video(VIDEO_OBSERVER))
+        obs = await asyncio.gather(*observers)
         blocks = [
             f"### {m.split('/')[-1]} ({len(d)} details):\n" + "\n".join(f"- {x}" for x in d)
             for m, d in obs if d
@@ -160,4 +201,7 @@ async def caption_ensemble(video_url: str, styles: list[str]) -> dict[str, str]:
         wd = Path(tmp)
         vp = await P._download(video_url, wd / "clip.mp4")
         frames = P._extract_keyframes(vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE)
-        return await caption_ensemble_frames(frames, styles)
+        video_b64 = None
+        if VIDEO_OBSERVER:
+            video_b64 = await asyncio.to_thread(_compress_for_video_observer, vp, wd)
+        return await caption_ensemble_frames(frames, styles, video_b64)
