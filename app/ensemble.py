@@ -50,7 +50,9 @@ OBSERVE_SYSTEM = (
     "and count, tree color, terrain, lighting, whether it is a time-lapse. Only include what "
     "is clearly visible. NEVER state race/ethnicity/skin color or eye color. Do NOT quote a "
     "sign unless the letters are unambiguous (say 'an unreadable sign'). Attribute a color "
-    "only to the object it truly belongs to. Return ONLY the JSON array."
+    "only to the object it truly belongs to. Express positions in VIEWER terms only "
+    "('on the left of the frame'), NEVER as the subject's own left/right. "
+    "Return ONLY the JSON array."
 )
 
 WRITE_SYSTEM = (
@@ -63,7 +65,8 @@ WRITE_SYSTEM = (
     "point. A wrong detail costs far more than a missing one - when in doubt, leave it out. "
     "NEVER add anything no model reported. Write four captions of the SAME "
     "scene, one per style, richly detailed and vivid; do not state race/skin/eye color, do not "
-    "quote an unreadable sign, attribute colors correctly. Styles: formal = professional, "
+    "quote an unreadable sign, attribute colors correctly. Positions: use viewer terms "
+    "('on the left of the frame'), NEVER the subject's own left/right ('to her left'). Styles: formal = professional, "
     "objective, factual, no jokes/exclamations/1st-2nd person; sarcastic = dry ironic wit "
     "with ZERO technology words (no model, server, cache, commit, runtime, API, deploy, "
     "pipeline, code, bug, latency); humorous_tech = clever tech metaphors (API, latency, "

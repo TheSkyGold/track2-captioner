@@ -259,7 +259,25 @@ def fallback_caption(style: str, facts: dict[str, Any] | None = None) -> str:
     return base
 
 
+# Subject-relative directions ("the mouse to her left") are a chronic VLM error:
+# models see the VIEWER's left but phrase it as the SUBJECT's left, which flips
+# the meaning (user-caught: mouse said "to her left", actually on her right).
+# Frame-relative phrasing ("left of the frame") is fine; subject-relative is
+# unverifiable from frames, so neutralize it to "beside".
+_SUBJ_DIR = re.compile(
+    r"(?:positioned\s+|located\s+|sitting\s+|placed\s+)?(?:to|at|on)\s+"
+    r"(her|his|their|its)\s+(?:left|right)(?:\s+side)?\b",
+    re.IGNORECASE,
+)
+_SUBJ_PRONOUN = {"her": "her", "his": "him", "their": "them", "its": "it"}
+
+
+def _neutralize_subject_directions(text: str) -> str:
+    return _SUBJ_DIR.sub(lambda m: f"beside {_SUBJ_PRONOUN[m.group(1).lower()]}", text)
+
+
 def _clean_caption(text: str) -> str:
+    text = _neutralize_subject_directions(text)
     text = " ".join(text.strip().split())
     replacements = {
         "\u2018": "'",
