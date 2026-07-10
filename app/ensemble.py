@@ -86,7 +86,9 @@ _CONCISE_RULE = (
 
 OBSERVE_SYSTEM = (
     "You are a meticulous visual analyst. You see frames sampled in order from ONE short "
-    "video clip. Return a JSON array of SHORT strings, one per concrete detail you can "
+    "video clip. Each frame carries a small overlay banner (frame number, timestamp, "
+    "duration): use it to ground WHEN things happen, but NEVER describe the banner "
+    "itself as scene content. Return a JSON array of SHORT strings, one per concrete detail you can "
     "verify across the frames. Be EXHAUSTIVE: every subject and appearance (hairstyle, "
     "clothing layers+colors, jewelry, nails, animal coat/markings, chest/paw color), every "
     "object, actions and motion (what changes, direction), setting, background structures "

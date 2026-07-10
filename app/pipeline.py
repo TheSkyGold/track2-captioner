@@ -453,15 +453,25 @@ def _extract_uniform_frames(
 ) -> list[Path]:
     step = max(duration / (n + 1), 0.1)
     out_paths: list[Path] = []
+    # Burn frame#/timestamp/duration into each frame (TIMESTAMP_FRAMES=1):
+    # observers gain temporal grounding ("at 0:15 the bus enters") - the
+    # leaderboard leader's single biggest measured lever.
+    stamp = os.environ.get("TIMESTAMP_FRAMES", "0") != "0"
     for i in range(1, n + 1):
         t = round(i * step, 3)
         out = workdir / f"{prefix}{i:02d}.jpg"
+        vf = f"scale='min({max_edge},iw)':-2"
+        if stamp:
+            label = f"frame {i}/{n}  t={int(t//60)}\\:{int(t%60):02d}  dur={int(duration//60)}\\:{int(duration%60):02d}"
+            font = os.environ.get("TIMESTAMP_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+            vf += (f",drawtext=fontfile='{font}':text='{label}':x=8:y=8:fontsize=20:"
+                   "fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=6")
         subprocess.run(
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-ss", str(t), "-i", str(video),
                 "-frames:v", "1",
-                "-vf", f"scale='min({max_edge},iw)':-2",
+                "-vf", vf,
                 "-q:v", "4",
                 str(out),
             ],

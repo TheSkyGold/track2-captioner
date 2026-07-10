@@ -16,6 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # ca-certificates lets requests/openai talk HTTPS.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
+        fonts-dejavu-core \
         ca-certificates \
         curl \
     && rm -rf /var/lib/apt/lists/*
@@ -40,6 +41,7 @@ ENV PYTHONPATH=/app \
     STYLE_EXEMPLARS=1 \
     STRICT_GROUNDING=1 \
     WRITER_TEMP=0.25 \
+    TIMESTAMP_FRAMES=1 \
     MAX_CAPTION_CHARS=1600 \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
     OPENROUTER_STYLE_MODEL=google/gemma-4-31b-it \
