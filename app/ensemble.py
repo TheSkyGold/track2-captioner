@@ -59,6 +59,17 @@ WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
 # grounded+richest caption per style. Both unset = exact previous behavior.
 CANDIDATE_SETS = int(os.environ.get("CANDIDATE_SETS", "1"))
 SELECTOR_MODEL = os.environ.get("ENSEMBLE_SELECTOR", "")
+# Calibrated lever L1: the judge punishes wrong specifics super-linearly and
+# never rewards length beyond ~v5 density. Downgrade uncorroborated specifics
+# to generics instead of DROPPING them (v16's mistake was hedging/deleting).
+FACT_CONSENSUS = os.environ.get("FACT_CONSENSUS", "0") != "0"
+_CONSENSUS_RULE = (
+    " SPECIFICS RULE: include a count, quoted on-screen text, a brand, an exact color, "
+    "or a proper name ONLY when at least two observer reports agree on it. If only one "
+    "observer reports such a specific, keep the event but state its generic form instead "
+    "('several people', 'a sign', 'a dog') - never drop the event, never shorten the "
+    "caption, never add hedging words."
+)
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
     "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
@@ -259,6 +270,7 @@ async def caption_ensemble_frames(
         )
         system = (WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "")
                   + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
+                  + (_CONSENSUS_RULE if FACT_CONSENSUS else "")
                   + (_GROUNDING_RULE if STRICT_GROUNDING else "")
                   + (_EXEMPLAR_BLOCK if EXEMPLARS else ""))
         # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
