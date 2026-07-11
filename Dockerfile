@@ -38,6 +38,7 @@ ENV PYTHONPATH=/app \
     CAPTION_ENGINE=ensemble \
     ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5 \
     ENSEMBLE_WRITER=anthropic/claude-opus-4.5 \
+    FACT_PARITY=1 \
     STYLE_EXEMPLARS=1 \
     STRICT_GROUNDING=0 \
     WRITER_TEMP=0.5 \

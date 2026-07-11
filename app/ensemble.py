@@ -48,6 +48,10 @@ VIDEO_OBSERVER = os.environ.get("VIDEO_OBSERVER", "")  # e.g. google/gemini-3.1-
 # Some writers (Gemini) default to terse captions; long rich ones score better
 # with the official judge (measured 0.89 long vs 0.84 concise). Optional hint.
 WRITER_LENGTH_HINT = os.environ.get("WRITER_LENGTH_HINT", "")
+# Preserve one shared evidence payload across all four voices. The official
+# score rewards each caption independently, so a funny style that drops half
+# the scene loses accuracy even when its joke lands.
+FACT_PARITY = os.environ.get("FACT_PARITY", "0") != "0"
 # Severe 2-axis panel diagnosis: accuracy=0.79 is the weak axis (style=0.92),
 # the writer invents specifics (fake collars, buses, manicures). This flips
 # grounding from "rich+vivid" to "only what was observed", and drops writer
@@ -82,6 +86,20 @@ _EXEMPLAR_BLOCK = (
 _CONCISE_RULE = (
     " LENGTH: write each caption as 2-3 dense sentences (about 40-60 words) that "
     "pack the strongest verified details - vivid and specific, not a long paragraph."
+)
+
+_FACT_PARITY_RULE = (
+    "\n\nFACT PARITY CONTRACT: Before writing, silently build one canonical fact plan "
+    "using only the observation lists. It must cover the main subjects, main actions, "
+    "setting, the strongest verified foreground and background details, and temporal "
+    "progression across the beginning, middle, and end whenever the frames show change. "
+    "Then write all four captions from that plan. Every caption must express the same "
+    "canonical facts, in the same chronological order, with comparable factual density. "
+    "Style may change diction and rhythm and may add one clearly non-literal joke or "
+    "metaphor, but it must not drop facts or reorder events. It must not add a literal "
+    "visual claim. "
+    "Humor must wrap the evidence, never replace it. If a fact is too weak for one style, "
+    "it is too weak for all four. Build the plan silently and return only the strict JSON."
 )
 
 OBSERVE_SYSTEM = (
@@ -119,6 +137,18 @@ WRITE_SYSTEM = (
     "everyday humor with ZERO technology words. Return STRICT JSON only: "
     '{"formal":"...","sarcastic":"...","humorous_tech":"...","humorous_non_tech":"..."}'
 )
+
+
+def _writer_system_prompt() -> str:
+    """Compose the writer prompt while keeping every experiment independently gated."""
+    return (
+        WRITE_SYSTEM
+        + (_CONCISE_RULE if CONCISE else "")
+        + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
+        + (_GROUNDING_RULE if STRICT_GROUNDING else "")
+        + (_FACT_PARITY_RULE if FACT_PARITY else "")
+        + (_EXEMPLAR_BLOCK if EXEMPLARS else "")
+    )
 
 
 async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any,
@@ -213,10 +243,7 @@ async def caption_ensemble_frames(
             "Independent observation lists from several vision models for ONE clip. "
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
         )
-        system = (WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "")
-                  + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
-                  + (_GROUNDING_RULE if STRICT_GROUNDING else "")
-                  + (_EXEMPLAR_BLOCK if EXEMPLARS else ""))
+        system = _writer_system_prompt()
         # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
         # discards the whole ensemble. One retry on transient writer failure -
         # cheaper than the alternative (a full 150s single-model pipeline rerun).
