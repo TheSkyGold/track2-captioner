@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from statistics import mean
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -129,11 +130,43 @@ async def _run_task(
 async def _amain(args: argparse.Namespace) -> int:
     raw_tasks = json.loads(args.tasks.read_text(encoding="utf-8"))
     tasks = parse_tasks(raw_tasks)
+    if args.limit:
+        tasks = tasks[: args.limit]
     observer_models = [f"local/qwen-observer-{index + 1}" for index in range(args.observers)]
+
+    endpoint_host = urlparse(E.OR_URL).hostname
+    if not args.allow_remote and endpoint_host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError(
+            f"Refusing non-local endpoint {E.OR_URL!r}; pass --allow-remote explicitly"
+        )
 
     control: list[dict[str, Any]] = []
     candidate: list[dict[str, Any]] = []
     audits: list[dict[str, Any]] = []
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def checkpoint() -> dict[str, Any]:
+        (args.output_dir / "control_results.json").write_text(
+            json.dumps(control, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (args.output_dir / "candidate_results.json").write_text(
+            json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report = {
+            "tasks": str(args.tasks),
+            "api_base": E.OR_URL,
+            "num_frames": P.NUM_FRAMES,
+            "frame_max_edge": P.FRAME_MAX_EDGE,
+            "observers": args.observers,
+            "control": _summary(control),
+            "candidate": _summary(candidate),
+            "audits": audits,
+        }
+        (args.output_dir / "ab_report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return report
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(args.http_timeout)) as client:
         for task in tasks:
             left, right, audit = await _run_task(
@@ -147,6 +180,7 @@ async def _amain(args: argparse.Namespace) -> int:
             control.append(left)
             candidate.append(right)
             audits.append(audit)
+            checkpoint()
             print(
                 f"{task['task_id']}: {audit['elapsed_s']:.1f}s; "
                 f"control={_summary([left])['mean_words']} words; "
@@ -154,26 +188,7 @@ async def _amain(args: argparse.Namespace) -> int:
                 flush=True,
             )
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    (args.output_dir / "control_results.json").write_text(
-        json.dumps(control, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    (args.output_dir / "candidate_results.json").write_text(
-        json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    report = {
-        "tasks": str(args.tasks),
-        "api_base": E.OR_URL,
-        "num_frames": P.NUM_FRAMES,
-        "frame_max_edge": P.FRAME_MAX_EDGE,
-        "observers": args.observers,
-        "control": _summary(control),
-        "candidate": _summary(candidate),
-        "audits": audits,
-    }
-    (args.output_dir / "ab_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    report = checkpoint()
     print(json.dumps({"control": report["control"], "candidate": report["candidate"]}))
     return 0
 
@@ -186,6 +201,12 @@ def main() -> None:
     parser.add_argument("--observer-max-tokens", type=int, default=1400)
     parser.add_argument("--writer-max-tokens", type=int, default=2200)
     parser.add_argument("--http-timeout", type=float, default=300.0)
+    parser.add_argument("--limit", type=int, default=0, help="Run only the first N tasks")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Permit a paid/non-local API endpoint (disabled by default)",
+    )
     args = parser.parse_args()
     if args.observers < 1:
         parser.error("--observers must be >= 1")
