@@ -65,7 +65,6 @@ TECH_TERMS = {
     "deploy",
     "docker",
     "fps",
-    "frames",
     "git",
     "ide",
     "kubernetes",
@@ -90,12 +89,19 @@ def _words(text: str) -> set[str]:
     }
 
 
+def _contains_term(text: str, term: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+        text,
+        re.IGNORECASE,
+    ) is not None
+
+
 def audit_caption(task_id: str, style: str, caption: str) -> list[str]:
     issues: list[str] = []
-    low = caption.lower()
-    if any(phrase in low for phrase in AI_TELL_PHRASES):
+    if any(_contains_term(caption, phrase) for phrase in AI_TELL_PHRASES):
         issues.append("ai_tell_phrase")
-    if any(phrase in low for phrase in LOW_TASTE_PHRASES):
+    if any(_contains_term(caption, phrase) for phrase in LOW_TASTE_PHRASES):
         issues.append("low_taste_or_sensitive_phrase")
     if any(pattern.search(caption) for pattern in GENERIC_CAPTION_PATTERNS):
         issues.append("generic_caption")

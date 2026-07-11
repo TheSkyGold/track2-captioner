@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -45,12 +46,25 @@ UNSUPPORTED_TERMS = {
     },
 }
 
+STYLE_ALLOWED_TERMS = {
+    "humorous_tech": {"code", "commit log", "ci/cd"},
+}
+
+
+def _contains_term(text: str, term: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+        text,
+        re.IGNORECASE,
+    ) is not None
+
 
 def audit_caption(task_id: str, style: str, caption: str) -> list[str]:
     issues: list[str] = []
-    low = caption.lower()
     for term in UNSUPPORTED_TERMS.get(task_id, set()):
-        if term in low:
+        if term in STYLE_ALLOWED_TERMS.get(style, set()):
+            continue
+        if _contains_term(caption, term):
             issues.append(f"unsupported_or_distracting_term:{term}")
     return [f"[{task_id}/{style}] {issue}" for issue in issues]
 
