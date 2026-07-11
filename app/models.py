@@ -354,6 +354,29 @@ def _has_tech_reference(text: str) -> bool:
     return _has_tech_jargon(text) or bool(_tech_words(text) & TECH_DETECT_EXTRA)
 
 
+def _add_explicit_tech_reference(text: str) -> str:
+    """Keep a grounded caption and repair only its missing style signal.
+
+    The ensemble can produce a visually excellent humorous_tech caption using
+    vague words such as "sequence" or "executing". Treating those ambiguous
+    words as tech would weaken the validator, while replacing the whole caption
+    discards its evidence. Append one unmistakable metaphor instead.
+    """
+    suffix = "The scene's algorithm has clearly optimized the moment for maximum drama."
+    separator = " " if text.endswith((".", "!", "?")) else ". "
+    budget = MAX_CAPTION_CHARS - len(separator) - len(suffix)
+    if budget < 40:
+        return text
+    base = text
+    if len(base) > budget:
+        base = base[:budget]
+        if " " in base:
+            base = base[:base.rfind(" ")]
+        base = base.rstrip(" ,;:.-!?")
+        separator = ". "
+    return _clean_caption(base + separator + suffix)
+
+
 _PLAIN_TECH_PHRASES = {
     "24 fps": "a rapid frame rate",
     "cache miss": "a missing saved result",
@@ -551,6 +574,14 @@ def normalize_captions(
             and style_filter_reason(style, text) == "tech_jargon_banned"
         ):
             repaired = _rewrite_tech_jargon_as_plain_language(text)
+            if repaired != text and caption_passes_style_filter(style, repaired):
+                text = repaired
+        if (
+            text
+            and style == "humorous_tech"
+            and style_filter_reason(style, text) == "missing_tech_term"
+        ):
+            repaired = _add_explicit_tech_reference(text)
             if repaired != text and caption_passes_style_filter(style, repaired):
                 text = repaired
         if (

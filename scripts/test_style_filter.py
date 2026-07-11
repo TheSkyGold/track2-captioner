@@ -85,6 +85,22 @@ def demo() -> None:
         assert "office" in repaired_hair.lower(), f"office lost [{style}]: {repaired_hair!r}"
         assert "afro" not in repaired_hair.lower(), f"identity label survived [{style}]: {repaired_hair!r}"
         assert caption_passes_style_filter(style, repaired_hair), repaired_hair
+
+    # Regression from the real v2 production run: the writer returned a rich,
+    # grounded kitten caption with tech-adjacent wording but no keyword from
+    # the strict require list. The normalizer must add a clear tech reference
+    # without throwing every visual fact away for a generic fallback.
+    implicit_tech = (
+        "This fluffy orange tabby kitten executes a flawless approach sequence, "
+        "maintaining eye contact while walking beneath green leaves beside a rough tree trunk."
+    )
+    repaired_tech = normalize_captions(
+        {"humorous_tech": implicit_tech}, ["humorous_tech"]
+    )["humorous_tech"]
+    for fact in ("orange tabby kitten", "eye contact", "green leaves", "tree trunk"):
+        assert fact in repaired_tech.lower(), f"grounded fact lost: {fact!r} in {repaired_tech!r}"
+    assert _has_tech_reference(repaired_tech), repaired_tech
+    assert repaired_tech != fallback_caption("humorous_tech"), repaired_tech
     print(f"STYLE-FILTER OK - {len(CLEAN)} clean + {len(TECH)} tech captions classified correctly; no cross-clip fallback leak.")
 
 
