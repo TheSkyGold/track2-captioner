@@ -196,7 +196,7 @@ python scripts/test_style_filter.py
 python scripts/test_verified_scene_gate.py
 ```
 
-Expected: contract and style checks pass; all 43 scene-gate tests pass.
+Expected: contract and style checks pass; all 44 scene-gate tests pass.
 
 - [ ] **Step 2: Run syntax and diff checks**
 
@@ -287,7 +287,7 @@ Acceptance: 12 valid captions, zero fallbacks, no grounding warnings, no garbled
 $rows = Get-Content -Raw out\bench_v30_dense\output\results.json | ConvertFrom-Json
 $formal = ($rows | Where-Object task_id -eq 'v3').captions.formal
 if ($formal -notmatch '(desktop|large) monitor') { throw 'v3 lost the desktop monitor' }
-if ($formal -notmatch '(cross pendant|pendant)') { throw 'v3 lost the pendant' }
+if ($formal -notmatch '(cross (pendant|necklace)|pendant)') { throw 'v3 lost the pendant' }
 if ($formal -notmatch '(bun|pink nail|mouse|ceiling light|orange|beige)') {
     throw 'v3 gained no additional verified distinctive detail'
 }

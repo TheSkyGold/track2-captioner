@@ -381,6 +381,16 @@ class StylePromptTests(unittest.TestCase):
             self.assertIn("distinctive appearance", low)
             self.assertIn("objects being handled or used", low)
 
+    def test_ambiguous_distant_landforms_are_not_promoted_to_mountains(self) -> None:
+        assert verified_observer_system is not None
+        observer = verified_observer_system.lower()
+        verifier = verified_scene.VERIFIER_SYSTEM.lower()
+        auditor = verified_scene.AUDITOR_SYSTEM.lower()
+        self.assertIn("distant or hazy landforms", observer)
+        self.assertIn("mountain ridge or peaks are unmistakable", observer)
+        self.assertIn("reject an exact landform class", verifier)
+        self.assertIn("hazy silhouette", auditor)
+
     def test_all_official_styles_have_bounded_word_ranges(self) -> None:
         self.assertEqual(
             style_limits,
