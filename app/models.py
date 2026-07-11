@@ -347,6 +347,59 @@ def _has_tech_reference(text: str) -> bool:
     return _has_tech_jargon(text) or bool(_tech_words(text) & TECH_DETECT_EXTRA)
 
 
+_PLAIN_TECH_PHRASES = {
+    "24 fps": "a rapid frame rate",
+    "cache miss": "a missing saved result",
+    "race condition": "a timing conflict",
+    "eventual consistency": "delayed agreement",
+    "hot reload": "instant refresh",
+    "hot-reload": "instant refresh",
+    "null check": "a missing-value check",
+    "pull request": "a proposed change",
+}
+
+_PLAIN_TECH_WORDS = {
+    "algorithm": "method",
+    "algorithms": "methods",
+    "api": "interface",
+    "backend": "behind-the-scenes system",
+    "ci": "automated check",
+    "ci/cd": "automated release process",
+    "coding": "computer work",
+    "cpu": "processor",
+    "database": "records system",
+    "developer": "worker",
+    "docker": "container tool",
+    "frontend": "visible interface",
+    "git": "version history",
+    "gpu": "graphics hardware",
+    "http": "web connection",
+    "ide": "code editor",
+    "javascript": "computer language",
+    "kubernetes": "cluster platform",
+    "latency": "delay",
+    "llm": "language model",
+    "npm": "package tool",
+    "programming": "computer work",
+    "regex": "text pattern",
+    "rollback": "reversal",
+    "runtime": "running process",
+    "scheduler": "planner",
+    "software": "computer program",
+    "sql": "data query",
+}
+
+
+def _rewrite_tech_jargon_as_plain_language(text: str) -> str:
+    """Preserve visible technology facts while removing style-banned jargon."""
+    repaired = text
+    for phrase, replacement in _PLAIN_TECH_PHRASES.items():
+        repaired = re.sub(rf"\b{re.escape(phrase)}\b", replacement, repaired, flags=re.I)
+    for word, replacement in _PLAIN_TECH_WORDS.items():
+        repaired = re.sub(rf"\b{re.escape(word)}\b", replacement, repaired, flags=re.I)
+    return " ".join(repaired.split())
+
+
 def _has_first_second_person(text: str) -> bool:
     words = {
         token.strip(".,!?;:()[]{}\"'`").lower()
@@ -464,6 +517,14 @@ def normalize_captions(
         too_short = len(text.split()) < min_words
         if text and not caption_passes_style_filter(style, text):
             repaired = strip_uncertainty_fillers(text)
+            if repaired != text and caption_passes_style_filter(style, repaired):
+                text = repaired
+        if (
+            text
+            and style in {"sarcastic", "humorous_non_tech"}
+            and style_filter_reason(style, text) == "tech_jargon_banned"
+        ):
+            repaired = _rewrite_tech_jargon_as_plain_language(text)
             if repaired != text and caption_passes_style_filter(style, repaired):
                 text = repaired
         if (

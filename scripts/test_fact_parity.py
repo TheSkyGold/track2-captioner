@@ -42,10 +42,12 @@ def main() -> None:
 
     required = (
         "CONSENSUS FACT SPINE",
-        "five to seven",
+        "at least five",
+        "not a hard maximum",
         "at least two independent observation lists",
         "same ordered spine facts",
         "literal visible technology remains factual scene content",
+        "visible subject, state, object, or action",
         "one clearly non-literal",
         "55-90 words",
     )

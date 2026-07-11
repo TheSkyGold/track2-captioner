@@ -30,9 +30,10 @@ cap, and one grouped JSON writer call.
 The writer performs these silent steps:
 
 1. Resolve conflicts between observer lists.
-2. Build an ordered spine of five to seven factual clauses covering the main
-   subject, central action or state, setting, useful context, and temporal change
-   when the clip shows one.
+2. Build an ordered spine with at least five core factual clauses covering the
+   main subject, central action or state, setting, useful context, and temporal
+   change when the clip shows one. Five to nine is typical, not a hard maximum;
+   complex clips retain additional salient facts when consensus supports them.
 3. Treat exact text, brands, locations, counts, fine-grained types, colors,
    species or breeds, and spatial placement as high-risk. Such details require
    agreement from at least two independent observation lists. A single-observer
@@ -49,11 +50,14 @@ The writer performs these silent steps:
 
 - `formal`: professional, objective, factual, no jokes or direct address.
 - `sarcastic`: dry, ironic, lightly mocking. Avoid technical jokes and jargon,
-  but retain plainly worded technology that is visibly part of the scene.
+  but retain plainly worded technology that is visibly part of the scene. If a
+  model emits hard jargon, normalize it to plain language instead of discarding
+  the caption.
 - `humorous_tech`: use a clear technology or programming analogy tied to the
   visible action while preserving all spine facts.
 - `humorous_non_tech`: everyday humor without technical jargon or technical
-  metaphors. Visible technology remains literal factual content.
+  metaphors. Visible technology remains literal factual content; hard jargon is
+  rewritten in plain language before any fallback is considered.
 
 ## Acceptance gates
 

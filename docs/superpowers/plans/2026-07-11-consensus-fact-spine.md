@@ -1,10 +1,10 @@
 # Consensus Fact Spine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan one task at a time. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the vague v32 parity prompt with a confidence-gated fact spine, prove the behavior locally, build the linux/amd64 image, and submit the verified image.
 
-**Architecture:** Preserve the full v19 inference profile and make one causal writer-prompt change. The single writer call first selects five to seven consensus facts, then renders the same ordered facts in all four styles while keeping literal visible technology in every voice. The existing paired A/B harness reuses frames and observations so local evidence isolates the prompt.
+**Architecture:** Preserve the full v19 inference profile and make one causal writer-prompt change. The single writer call first selects at least five core consensus facts, retaining more when a complex clip needs them, then renders the same ordered facts in all four styles while keeping literal visible technology in every voice. The existing paired A/B harness reuses frames and observations so local evidence isolates the prompt.
 
 **Tech Stack:** Python 3.11, httpx, FFmpeg, Docker Buildx, OpenRouter-compatible APIs, Qwen3-VL on ROCm for zero-credit development, Git/GitHub, public container registry.
 
@@ -21,7 +21,7 @@
 Run:
 
 ```powershell
-rg -n "single-observer|visible technology|five to seven|55-90|same order" docs/superpowers/specs/2026-07-11-consensus-fact-spine-design.md
+rg -n "single-observer|visible technology|at least five|not a hard maximum|55-90|same order" docs/superpowers/specs/2026-07-11-consensus-fact-spine-design.md
 ```
 
 Expected: every failure class and the bounded-length guidance appear.
@@ -46,7 +46,8 @@ Add assertions equivalent to:
 ```python
 required = (
     "CONSENSUS FACT SPINE",
-    "five to seven",
+    "at least five",
+    "not a hard maximum",
     "at least two independent observation lists",
     "same ordered spine facts",
     "literal visible technology remains factual scene content",
@@ -73,16 +74,25 @@ old `FACT PARITY CONTRACT`.
 
 **Files:**
 - Modify: `app/ensemble.py:91-139`
+- Modify: `app/models.py:330-480`
 - Test: `scripts/test_fact_parity.py`
+- Test: `scripts/test_style_filter.py`
 
 - [ ] **Step 1: Replace `_FACT_PARITY_RULE` with the approved silent workflow**
 
-The rule must state all of the following directly: five to seven ordered facts,
-two-observer support for high-risk specifics, safe generalization of a generic
-single-observer detail, all spine facts in every style, one non-literal clause,
-and non-binding 55-90-word guidance.
+The rule must state all of the following directly: at least five ordered core
+facts with no hard maximum for complex clips, two-observer support for high-risk
+specifics, safe generalization of a generic single-observer detail, all spine
+facts in every style, one non-literal clause, and non-binding 55-90-word guidance.
 
-- [ ] **Step 2: Correct the style definitions**
+- [ ] **Step 2: Preserve technology facts when jargon is rejected**
+
+Add a failing normalization test for a visible dashboard described with
+`developer`, `GPU`, `IDE`, and `CPU`. Implement whole-word plain-language
+rewrites before fallback so the dashboard and graph remain while the banned
+jargon becomes `worker`, `graphics hardware`, `code editor`, and `processor`.
+
+- [ ] **Step 3: Correct the style definitions**
 
 Replace `ZERO technology words` with:
 
@@ -92,15 +102,17 @@ Replace `ZERO technology words` with:
 "Literal visible technology remains factual scene content in every style and must be named plainly. "
 ```
 
-- [ ] **Step 3: Run the prompt test and verify GREEN**
+- [ ] **Step 4: Run the prompt and style tests and verify GREEN**
 
 ```powershell
 python scripts/test_fact_parity.py
+$env:PYTHONPATH='.'
+python scripts/test_style_filter.py
 ```
 
 Expected: `FACT-SPINE TEST OK` and exit code 0.
 
-- [ ] **Step 4: Run adjacent regression tests**
+- [ ] **Step 5: Run adjacent regression tests**
 
 ```powershell
 $env:PYTHONPATH='.'
@@ -114,10 +126,10 @@ python scripts/test_429_retry.py
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit the prompt change**
+- [ ] **Step 6: Commit the prompt and normalization change**
 
 ```powershell
-git add app/ensemble.py scripts/test_fact_parity.py
+git add app/ensemble.py app/models.py scripts/test_fact_parity.py scripts/test_style_filter.py
 git commit -m "feat: gate captions on a consensus fact spine"
 ```
 

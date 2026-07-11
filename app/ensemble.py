@@ -90,7 +90,9 @@ _CONCISE_RULE = (
 
 _FACT_PARITY_RULE = (
     "\n\nCONSENSUS FACT SPINE: Before writing, silently resolve conflicts and select "
-    "five to seven ordered factual clauses from the observation lists. Cover the main "
+    "at least five ordered core factual clauses from the observation lists. Usually five "
+    "to nine clauses are enough, but nine is not a hard maximum: retain any additional "
+    "high-confidence fact needed to cover a complex or changing clip. Cover the main "
     "subject, central action or state, setting, useful foreground or background context, "
     "and beginning-to-end temporal change when the frames actually show one. Exact text, "
     "brands, locations, counts, fine-grained object or vehicle types, colors, breeds or "
@@ -138,7 +140,8 @@ WRITE_SYSTEM = (
     "Styles: formal = professional, objective, factual, no jokes, exclamations, or "
     "first/second person; sarcastic = dry, ironic, lightly mocking, with no technical joke "
     "or jargon; humorous_tech = clever tech or programming metaphors (API, latency, cache, "
-    "pipeline, runtime, server) tied to visible actions; humorous_non_tech = warm everyday "
+    "pipeline, runtime, server) tied to a visible subject, state, object, or action; "
+    "humorous_non_tech = warm everyday "
     "humor with no technical jargon or tech metaphor. Literal visible technology remains "
     "factual scene content in every style and must be named plainly when it belongs to the "
     "shared facts; never omit a visible computer, monitor, keyboard, phone, machine, or "

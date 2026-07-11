@@ -6,7 +6,13 @@ filter, which would silently reject good sarcastic / humorous_non_tech captions.
 """
 from __future__ import annotations
 
-from app.models import _has_tech_jargon, _has_tech_reference, caption_passes_style_filter, fallback_caption
+from app.models import (
+    _has_tech_jargon,
+    _has_tech_reference,
+    caption_passes_style_filter,
+    fallback_caption,
+    normalize_captions,
+)
 
 # Everyday captions that legitimately use words a bad tech filter over-matches.
 CLEAN = [
@@ -50,6 +56,15 @@ def demo() -> None:
     for style in ("sarcastic", "humorous_tech", "humorous_non_tech"):
         fb = fallback_caption(style, space_facts)
         assert "kitten" not in fb.lower(), f"kitten leak on space clip [{style}]: {fb!r}"
+
+    literal_tech = (
+        "A developer studies a GPU dashboard in an IDE while a CPU graph rises on screen."
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        repaired = normalize_captions({style: literal_tech}, [style])[style]
+        assert "dashboard" in repaired.lower(), f"visible dashboard lost [{style}]: {repaired!r}"
+        assert "graph" in repaired.lower(), f"visible graph lost [{style}]: {repaired!r}"
+        assert not _has_tech_jargon(repaired), f"jargon survived repair [{style}]: {repaired!r}"
     print(f"STYLE-FILTER OK - {len(CLEAN)} clean + {len(TECH)} tech captions classified correctly; no cross-clip fallback leak.")
 
 
