@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app import ensemble as E
+from app import models as M
 from app import pipeline as P
 from app.models import FALLBACK_CAPTIONS, REQUIRED_STYLES, normalize_captions, parse_tasks
 
@@ -140,6 +142,36 @@ async def _amain(args: argparse.Namespace) -> int:
             f"Refusing non-local endpoint {E.OR_URL!r}; pass --allow-remote explicitly"
         )
 
+    profile = {
+        "MAX_CAPTION_CHARS": M.MAX_CAPTION_CHARS,
+        "NUM_FRAMES": P.NUM_FRAMES,
+        "FRAME_MAX_EDGE": P.FRAME_MAX_EDGE,
+        "SCENE_DETECT_ENABLED": P.SCENE_DETECT_ENABLED,
+        "TIMESTAMP_FRAMES": os.environ.get("TIMESTAMP_FRAMES", "0") != "0",
+        "STYLE_EXEMPLARS": E.EXEMPLARS,
+        "STRICT_GROUNDING": E.STRICT_GROUNDING,
+        "ENSEMBLE_CONCISE": E.CONCISE,
+    }
+    expected_profile = {
+        "MAX_CAPTION_CHARS": 1600,
+        "NUM_FRAMES": 10,
+        "FRAME_MAX_EDGE": 896,
+        "SCENE_DETECT_ENABLED": False,
+        "TIMESTAMP_FRAMES": False,
+        "STYLE_EXEMPLARS": True,
+        "STRICT_GROUNDING": False,
+        "ENSEMBLE_CONCISE": False,
+    }
+    drift = {
+        key: {"expected": expected_profile[key], "actual": value}
+        for key, value in profile.items()
+        if value != expected_profile[key]
+    }
+    if drift and not args.allow_profile_drift:
+        raise RuntimeError(
+            f"Refusing non-v19 benchmark profile: {json.dumps(drift, sort_keys=True)}"
+        )
+
     control: list[dict[str, Any]] = []
     candidate: list[dict[str, Any]] = []
     audits: list[dict[str, Any]] = []
@@ -158,6 +190,7 @@ async def _amain(args: argparse.Namespace) -> int:
             "num_frames": P.NUM_FRAMES,
             "frame_max_edge": P.FRAME_MAX_EDGE,
             "observers": args.observers,
+            "profile": profile,
             "control": _summary(control),
             "candidate": _summary(candidate),
             "audits": audits,
@@ -206,6 +239,11 @@ def main() -> None:
         "--allow-remote",
         action="store_true",
         help="Permit a paid/non-local API endpoint (disabled by default)",
+    )
+    parser.add_argument(
+        "--allow-profile-drift",
+        action="store_true",
+        help="Permit settings that differ from the official v19 baseline",
     )
     args = parser.parse_args()
     if args.observers < 1:
