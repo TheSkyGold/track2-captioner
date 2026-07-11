@@ -41,16 +41,18 @@ def main() -> None:
         ensemble.EXEMPLARS = old_exemplars
 
     required = (
-        "FACT PARITY CONTRACT",
-        "same canonical facts",
-        "same chronological order",
-        "comparable factual density",
-        "beginning, middle, and end",
-        "must not add a literal visual claim",
+        "CONSENSUS FACT SPINE",
+        "five to seven",
+        "at least two independent observation lists",
+        "same ordered spine facts",
+        "literal visible technology remains factual scene content",
+        "one clearly non-literal",
+        "55-90 words",
     )
     for phrase in required:
         assert phrase.lower() in prompt.lower(), phrase
 
+    assert "ZERO technology words" not in prompt
     assert "40-60 words" not in prompt
     assert "TONE EXAMPLES" in prompt
 
@@ -59,9 +61,9 @@ def main() -> None:
         control_prompt = ensemble._writer_system_prompt()
     finally:
         ensemble.FACT_PARITY = old_parity
-    assert "FACT PARITY CONTRACT" not in control_prompt
+    assert "CONSENSUS FACT SPINE" not in control_prompt
 
-    print("FACT-PARITY TEST OK - v19 density preserved; one prompt lever enabled")
+    print("FACT-SPINE TEST OK - v19 profile preserved; confidence-gated parity enabled")
 
 
 if __name__ == "__main__":

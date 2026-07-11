@@ -103,8 +103,11 @@ Expected: `FACT-SPINE TEST OK` and exit code 0.
 - [ ] **Step 4: Run adjacent regression tests**
 
 ```powershell
+$env:PYTHONPATH='.'
+$env:MAX_CAPTION_CHARS='1600'
 python scripts/test_style_filter.py
 python scripts/test_hardening.py
+Remove-Item Env:MAX_CAPTION_CHARS
 python scripts/contract_test.py
 python scripts/test_429_retry.py
 ```
@@ -166,8 +169,11 @@ single-observer detail is repeated across styles.
 ```powershell
 python scripts/test_fact_parity.py
 python scripts/test_qwen3vl_local_server.py
+$env:PYTHONPATH='.'
+$env:MAX_CAPTION_CHARS='1600'
 python scripts/test_style_filter.py
 python scripts/test_hardening.py
+Remove-Item Env:MAX_CAPTION_CHARS
 python scripts/contract_test.py
 python scripts/test_429_retry.py
 python scripts/preflight.py

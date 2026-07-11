@@ -89,17 +89,22 @@ _CONCISE_RULE = (
 )
 
 _FACT_PARITY_RULE = (
-    "\n\nFACT PARITY CONTRACT: Before writing, silently build one canonical fact plan "
-    "using only the observation lists. It must cover the main subjects, main actions, "
-    "setting, the strongest verified foreground and background details, and temporal "
-    "progression across the beginning, middle, and end whenever the frames show change. "
-    "Then write all four captions from that plan. Every caption must express the same "
-    "canonical facts, in the same chronological order, with comparable factual density. "
-    "Style may change diction and rhythm and may add one clearly non-literal joke or "
-    "metaphor, but it must not drop facts or reorder events. It must not add a literal "
-    "visual claim. "
-    "Humor must wrap the evidence, never replace it. If a fact is too weak for one style, "
-    "it is too weak for all four. Build the plan silently and return only the strict JSON."
+    "\n\nCONSENSUS FACT SPINE: Before writing, silently resolve conflicts and select "
+    "five to seven ordered factual clauses from the observation lists. Cover the main "
+    "subject, central action or state, setting, useful foreground or background context, "
+    "and beginning-to-end temporal change when the frames actually show one. Exact text, "
+    "brands, locations, counts, fine-grained object or vehicle types, colors, breeds or "
+    "species, and spatial placement are HIGH-RISK specifics: include them only when at "
+    "least two independent observation lists agree. A detail from one list may survive "
+    "only after it is generalized into a generic, safe fact. Omit conflicts. "
+    "Draft the formal caption from the complete spine, then express the same ordered spine "
+    "facts in every other style without dropping, merging away, or reordering evidence. "
+    "Each creative caption may add one clearly non-literal joke or metaphor, but it must "
+    "not imply that an off-screen person, animal, object, place, or event is literally "
+    "present. Humor wraps the evidence; it never replaces or expands it. Prefer two to "
+    "four sentences and roughly 55-90 words when the selected facts support that range, "
+    "but never pad with weak claims or cut a spine fact merely to hit a word target. Build "
+    "the spine silently and return only the strict JSON."
 )
 
 OBSERVE_SYSTEM = (
@@ -129,12 +134,15 @@ WRITE_SYSTEM = (
     "NEVER add anything no model reported. Write four captions of the SAME "
     "scene, one per style, richly detailed and vivid; do not state race/skin/eye color, do not "
     "quote an unreadable sign, attribute colors correctly. Only assert lighting effects (light streaks, glows, headlight/taillight trails) when unmistakably visible - never as a time-lapse cliche. Positions: use viewer terms "
-    "('on the left of the frame'), NEVER the subject's own left/right ('to her left'). Styles: formal = professional, "
-    "objective, factual, no jokes/exclamations/1st-2nd person; sarcastic = dry ironic wit "
-    "with ZERO technology words (no model, server, cache, commit, runtime, API, deploy, "
-    "pipeline, code, bug, latency); humorous_tech = clever tech metaphors (API, latency, "
-    "cache, pipeline, runtime, server) tied to visible things; humorous_non_tech = warm "
-    "everyday humor with ZERO technology words. Return STRICT JSON only: "
+    "('on the left of the frame'), NEVER the subject's own left/right ('to her left'). "
+    "Styles: formal = professional, objective, factual, no jokes, exclamations, or "
+    "first/second person; sarcastic = dry, ironic, lightly mocking, with no technical joke "
+    "or jargon; humorous_tech = clever tech or programming metaphors (API, latency, cache, "
+    "pipeline, runtime, server) tied to visible actions; humorous_non_tech = warm everyday "
+    "humor with no technical jargon or tech metaphor. Literal visible technology remains "
+    "factual scene content in every style and must be named plainly when it belongs to the "
+    "shared facts; never omit a visible computer, monitor, keyboard, phone, machine, or "
+    "server rack merely because the requested humor is non-technical. Return STRICT JSON only: "
     '{"formal":"...","sarcastic":"...","humorous_tech":"...","humorous_non_tech":"..."}'
 )
 
