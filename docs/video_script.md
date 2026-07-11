@@ -8,13 +8,13 @@ Format: screen recording + voiceover. Unlisted YouTube is fine. Keep it tight.
 **Visual:** the three sample clips playing (traffic / kitten / office), four caption chips fading in per clip.
 **VO:** "Every short video needs captions — for accessibility, for marketing, for reach. Track 2 asks for four *very different* tones of the same clip, and it scores you on two things at once: are you *accurate*, and does the *tone* land. Those pull against each other. Here's how we win both."
 
-## 0:20–0:50 — The core idea: an ensemble that sees more, and lies less
+## 0:20–0:50 — The core idea: a verified scene gate
 **Visual:** animated diagram — one clip → keyframes → two observer boxes (GPT‑5.5 and Gemini 3.1 Pro), a GPT‑5.5 verification gate, then four Claude Opus 4.8 style writers.
-**VO:** "Instead of one model, three frontier vision models watch the frames independently and each lists everything they see. A writer then cross‑references them: a detail two models agree on is trusted; a lone, unverifiable guess is dropped. Detection comes from the *union* of what they see. Precision comes from their *agreement*."
+**VO:** "Two frontier vision models independently propose short atomic facts. GPT‑5.5 then re-reads the pixels and can keep only existing fact IDs, never invent or rewrite one. Four Claude Opus 4.8 writers receive that same closed ledger, and a final judge repairs only the style that fails. Accuracy is locked before creativity begins."
 
-## 0:50–1:20 — Proof, on the judge's own clips
-**Visual:** the benchmark table (BENCHMARK_LOG.md) highlighting: ENSEMBLE 0.942 accuracy, ~14.8 verified details/caption, ~3× any single model. Then the v1 caption zooming in on "KOREA ILLIES ENGINEERING", "Starbucks", "TAXPARK INSURANCE".
-**VO:** "We didn't grade ourselves on a friendly judge. We built an adversarial *vision* audit — agents that read the real frames and try to *refute* every claim — and ran it on the fifteen clips in AMD's own bucket, the exact distribution the jury samples. The ensemble scores 0.94 accuracy with about fifteen verified details per caption — roughly three times any single model. It even reads a street sign none of the models get right alone, by agreement."
+## 0:50–1:20 — Proof beyond the public examples
+**Visual:** the release dashboard highlighting 40 passing tests, 3/3 public clips in 63.2 seconds, and 48/48 captions on a twelve-clip stress set.
+**VO:** "We do not present a local proxy as an official score. Instead, we test the failure modes the hidden judge can punish: invented facts, mixed timelines, missing styles, malformed JSON, provider stalls, and generic humor. Forty targeted tests pass. The final container completes every public example in just over a minute, and a separate twelve-clip stress run produces all forty-eight captions inside the ten-minute limit."
 
 ## 1:20–1:45 — It's not a demo, it's a product
 **Visual:** the upload web app — paste a URL / drop a file → four captions appear. Then the side‑by‑side model comparison page.
