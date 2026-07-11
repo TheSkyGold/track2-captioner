@@ -395,7 +395,7 @@ class StylePromptTests(unittest.TestCase):
         self.assertEqual(
             style_limits,
             {
-                "formal": (38, 55),
+                "formal": (38, 50),
                 "sarcastic": (24, 40),
                 "humorous_tech": (24, 45),
                 "humorous_non_tech": (24, 45),
@@ -427,6 +427,7 @@ class StylePromptTests(unittest.TestCase):
             self.assertIn(facts[0], user)
             self.assertIn(facts[1], user)
             self.assertIn("Fact 1 is the mandatory central anchor", user)
+            self.assertIn("300 characters including spaces", user)
             self.assertNotIn("Paris", user)
             self.assertIn("Output caption text only", user)
 

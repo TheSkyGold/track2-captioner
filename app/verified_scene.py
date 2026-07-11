@@ -125,7 +125,7 @@ _FALLBACK_PLURAL_HEADS = {
 }
 
 STYLE_LIMITS: dict[str, tuple[int, int]] = {
-    "formal": (38, 55),
+    "formal": (38, 50),
     "sarcastic": (24, 40),
     "humorous_tech": (24, 45),
     "humorous_non_tech": (24, 45),
@@ -416,7 +416,8 @@ def build_style_prompt(style: str, facts: list[str]) -> tuple[str, str]:
         )
     user = (
         f"VERIFIED FACTS FOR ONE VIDEO:\n{context}\n\n"
-        f"Write one {style} caption of {minimum}-{maximum} words. Every factual "
+        f"Write one {style} caption of {minimum}-{maximum} words and at most 300 "
+        "characters including spaces. Every factual "
         "assertion must be entailed by the verified facts. Pack as many useful, "
         "non-redundant verified details as naturally fit, prioritizing the main subject "
         "and action, distinctive appearance or markings, clothing or accessories, objects "
@@ -767,7 +768,7 @@ async def generate_verified_captions(
                           reason: str = "") -> str:
         system, user = build_style_prompt(style, facts)
         if stage == "repair":
-            repair_target = "40 to 48" if style == "formal" else "28 to 34"
+            repair_target = "38 to 44" if style == "formal" else "28 to 34"
             user += (
                 f"\n\nREPAIR THIS CAPTION:\n{original}\n"
                 f"Failure reason: {reason or 'deterministic or visual audit failure'}. "
