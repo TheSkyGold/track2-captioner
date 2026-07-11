@@ -8,7 +8,6 @@ Contract (from Participant Guide):
 Constraints:
     - Container must be READY within 60 s (no heavy startup)
     - Total runtime < 10 min
-    - Response < 30 s / request
     - Output MUST be valid JSON, all requested styles present (missing -> 0)
     - English only
     - Runs on linux/amd64
@@ -40,7 +39,8 @@ CAPTION_ENGINE = os.environ.get("CAPTION_ENGINE", "pipeline")
 INPUT_PATH = Path(os.environ.get("INPUT_PATH", "/input/tasks.json"))
 OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
 
-# Hard budget per task (leaves margin under the 30 s/request harness limit).
+# Hard budget per task. Docker uses 70 s while two tasks run concurrently,
+# leaving margin under the documented 10-minute batch limit.
 PER_TASK_TIMEOUT_S = float(os.environ.get("PER_TASK_TIMEOUT_S", "25"))
 # Max concurrent videos processed in parallel. Keep low to avoid rate limits.
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "3"))
@@ -66,6 +66,19 @@ log = logging.getLogger("track2")
 def _empty_caption_set(styles: list[str]) -> dict[str, str]:
     """A caption for each requested style, even on failure."""
     return {s: fallback_caption(s) for s in styles}
+
+
+def _write_results_atomic(results: list[dict[str, Any]]) -> None:
+    """Validate and atomically replace results.json."""
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    validated = validate_results(results)
+    temporary = OUTPUT_PATH.with_name(OUTPUT_PATH.name + ".tmp")
+    temporary.write_text(
+        json.dumps(validated, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary, OUTPUT_PATH)
 
 
 async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, Any]:
@@ -136,15 +149,37 @@ async def _amain() -> int:
 
     log.info("Loaded %d task(s) from %s", len(tasks_in), INPUT_PATH)
 
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-    results = await asyncio.gather(*(_run_one(sem, t) for t in tasks_in))
+    # The harness may kill the process at the global deadline.  Write a complete
+    # valid floor before the first network call so that every task/style still
+    # exists even under a hard termination.
+    prefilled = [
+        {
+            "task_id": task["task_id"],
+            "captions": normalize_captions(
+                _empty_caption_set(task.get("styles") or list(REQUIRED_STYLES)),
+                task.get("styles") or list(REQUIRED_STYLES),
+            ),
+        }
+        for task in tasks_in
+    ]
+    _write_results_atomic(prefilled)
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    validated = validate_results(results)
-    OUTPUT_PATH.write_text(
-        json.dumps(validated, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    results = list(prefilled)
+
+    async def run_indexed(index: int, task: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return index, await _run_one(sem, task)
+
+    pending = [
+        asyncio.create_task(run_indexed(index, task))
+        for index, task in enumerate(tasks_in)
+    ]
+    for completed in asyncio.as_completed(pending):
+        index, result = await completed
+        results[index] = result
+        _write_results_atomic(results)
+
+    _write_results_atomic(results)
     log.info("Wrote %d result(s) -> %s", len(results), OUTPUT_PATH)
     return 0
 

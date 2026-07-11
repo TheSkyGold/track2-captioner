@@ -30,19 +30,28 @@ COPY app/ ./app/
 
 # The harness mounts /input and /output at runtime and injects NO env vars,
 # so the submission profile is pinned here. Non-secret config is plain ENV.
-# Submission engine = ENSEMBLE (measured best on the official jury distribution:
-# 0.942 accuracy, ~14.8 correct details/caption, lowest contradictions). Three
-# frontier vision models observe the frames; Claude Opus 4.5 cross-references and
-# writes. To fall back to the single-model pipeline, set CAPTION_ENGINE=pipeline.
+# Submission engine = verified-short. Kimi drafts a compact fact set, rechecks
+# it against the same six frames, then a low-latency text model writes each
+# requested style independently.
+# The legacy pipeline remains available as the in-process failure fallback.
 ENV PYTHONPATH=/app \
-    CAPTION_ENGINE=ensemble \
+    CAPTION_ENGINE=pipeline \
+    VERIFIED_SHORT_SPINE=1 \
+    VERIFIED_VISION_MODEL=accounts/fireworks/models/kimi-k2p6 \
+    VERIFIED_WRITER_MODEL=accounts/fireworks/models/gpt-oss-20b \
+    VERIFIED_WRITER_FALLBACKS=accounts/fireworks/models/deepseek-v4-flash \
+    VERIFIED_OPENROUTER_VISION_FALLBACK=qwen/qwen3-vl-235b-a22b-instruct \
+    VERIFIED_OPENROUTER_WRITER_FALLBACK=openai/gpt-oss-120b \
+    VERIFIED_HTTP_TIMEOUT=30 \
+    VERIFIED_429_RETRIES=1 \
+    VERIFIED_429_MAX_WAIT_S=3 \
     ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5 \
     ENSEMBLE_WRITER=anthropic/claude-opus-4.5 \
     STYLE_EXEMPLARS=1 \
     STRICT_GROUNDING=0 \
     WRITER_TEMP=0.5 \
     TIMESTAMP_FRAMES=0 \
-    MAX_CAPTION_CHARS=1600 \
+    MAX_CAPTION_CHARS=300 \
     OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
     OPENROUTER_STYLE_MODEL=google/gemma-4-31b-it \
     PROVIDER_ORDER=openrouter,groq,fireworks \
@@ -50,9 +59,11 @@ ENV PYTHONPATH=/app \
     STYLE_MODEL=accounts/fireworks/models/gpt-oss-120b \
     STYLE_REASONING_EFFORT=low \
     STYLE_MAX_TOKENS=1400 \
-    DETERMINISTIC_FORMAL=1 \
-    NUM_FRAMES=10 \
-    FRAME_MAX_EDGE=896 \
+    DETERMINISTIC_FORMAL=0 \
+    EVIDENCE_LOCK_ENABLED=0 \
+    AUDIO_TRANSCRIBE_ENABLED=0 \
+    NUM_FRAMES=6 \
+    FRAME_MAX_EDGE=768 \
     GROQ_MAX_IMAGES=4 \
     GROQ_FRAME_MAX_EDGE=448 \
     HTTP_429_RETRIES=5 \
@@ -61,7 +72,7 @@ ENV PYTHONPATH=/app \
     DESCRIBE_MAX_TOKENS=1300 \
     SCENE_DETECT_ENABLED=0 \
     MAX_CONCURRENCY=2 \
-    PER_TASK_TIMEOUT_S=150 \
+    PER_TASK_TIMEOUT_S=70 \
     GLOBAL_BUDGET_S=540
 # Judging VM = 2 vCPU / 4 GB RAM (Participant Guide p.5). Scene-detection
 # decodes the ENTIRE UHD clip per video and three parallel ffmpeg passes

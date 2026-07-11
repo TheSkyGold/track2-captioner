@@ -34,6 +34,7 @@ from tenacity import (
 
 from app.models import caption_passes_style_filter, fallback_caption, normalize_captions
 from app.prompts import DESCRIBE_SYSTEM, DESCRIBE_USER, STYLE_PROMPTS
+from app.verified_short import caption_verified_frames
 
 load_dotenv()
 
@@ -92,6 +93,32 @@ EVIDENCE_LOCK_ENABLED = os.environ.get("EVIDENCE_LOCK_ENABLED", "0") != "0"
 DETERMINISTIC_FORMAL = os.environ.get("DETERMINISTIC_FORMAL", "1") != "0"
 STYLE_CANDIDATES = max(1, int(os.environ.get("STYLE_CANDIDATES", "2")))
 STYLE_REPAIR_ENABLED = os.environ.get("STYLE_REPAIR_ENABLED", "1") != "0"
+VERIFIED_SHORT_SPINE = os.environ.get("VERIFIED_SHORT_SPINE", "0") != "0"
+VERIFIED_VISION_MODEL = os.environ.get(
+    "VERIFIED_VISION_MODEL", "accounts/fireworks/models/kimi-k2p6"
+)
+VERIFIED_WRITER_MODEL = os.environ.get(
+    "VERIFIED_WRITER_MODEL", "accounts/fireworks/models/gpt-oss-20b"
+)
+VERIFIED_VISION_FALLBACKS = os.environ.get(
+    "VERIFIED_VISION_FALLBACKS",
+    os.environ.get("VERIFIED_MODEL_FALLBACKS", ""),
+)
+VERIFIED_WRITER_FALLBACKS = os.environ.get(
+    "VERIFIED_WRITER_FALLBACKS",
+    "accounts/fireworks/models/deepseek-v4-flash",
+)
+VERIFIED_OPENROUTER_VISION_FALLBACK = os.environ.get(
+    "VERIFIED_OPENROUTER_VISION_FALLBACK",
+    "qwen/qwen3-vl-235b-a22b-instruct",
+)
+VERIFIED_OPENROUTER_WRITER_FALLBACK = os.environ.get(
+    "VERIFIED_OPENROUTER_WRITER_FALLBACK",
+    "openai/gpt-oss-120b",
+)
+VERIFIED_HTTP_TIMEOUT = float(os.environ.get("VERIFIED_HTTP_TIMEOUT", "30"))
+VERIFIED_429_RETRIES = int(os.environ.get("VERIFIED_429_RETRIES", "1"))
+VERIFIED_429_MAX_WAIT_S = float(os.environ.get("VERIFIED_429_MAX_WAIT_S", "3"))
 
 
 # =============================================================================
@@ -102,6 +129,22 @@ async def caption_one_video(video_url: str, styles: list[str]) -> dict[str, str]
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         video_path = await _download(video_url, workdir / "clip.mp4")
+        verified_frames: list[Path] | None = None
+        if VERIFIED_SHORT_SPINE:
+            verified_frames = _extract_keyframes(
+                video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE
+            )
+            try:
+                captions = await caption_verified_frames(
+                    verified_frames,
+                    styles,
+                    VERIFIED_VISION_MODEL,
+                    VERIFIED_WRITER_MODEL,
+                    _invoke_verified_payload,
+                )
+                return normalize_captions(captions, styles)
+            except Exception as e:  # noqa: BLE001 - keep the proven legacy fallback
+                log.warning("verified-short engine failed; using legacy pipeline: %s", e)
         facts = await _direct_video_facts(video_path, workdir)
         if facts:
             captions = await _style_all(facts, styles)
@@ -109,7 +152,9 @@ async def caption_one_video(video_url: str, styles: list[str]) -> dict[str, str]
             if EVIDENCE_LOCK_ENABLED:
                 normalized = await _repair_with_sibling_context(normalized, facts, styles)
             return normalize_captions(normalized, styles, facts)
-        frames = _extract_keyframes(video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE)
+        frames = verified_frames or _extract_keyframes(
+            video_path, workdir, NUM_FRAMES, FRAME_MAX_EDGE
+        )
         # Audio transcript is optional but strongly boosts humorous_tech / non_tech
         # scores (jokes live in the voice track). Left as a hook — enable Whisper
         # if you ship it in the image.
@@ -569,6 +614,191 @@ async def _chat_content_at(base_url: str, api_key: str, payload: dict[str, Any])
         # (which catches httpx.HTTPError) fails over to the next model/provider.
         r.raise_for_status()
         raise httpx.HTTPStatusError("429 not cleared", request=r.request, response=r)
+
+
+def _verified_response_content(body: dict[str, Any]) -> str:
+    """Accept only a complete, non-empty verified-short model response."""
+
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("verified response has no choices")
+    choice = choices[0]
+    finish_reason = str(choice.get("finish_reason") or "")
+    if finish_reason == "length":
+        raise ValueError("verified response rejected: finish_reason=length")
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("verified response has no message")
+    content = str(message.get("content") or "").strip()
+    if not content:
+        raise ValueError("verified response content is empty")
+    return content
+
+
+async def _verified_chat_content_at(
+    base_url: str,
+    api_key: str,
+    payload: dict[str, Any],
+) -> str:
+    """Single-attempt Fireworks call with a v37-specific latency ceiling.
+
+    The legacy helper retries transport errors.  Repeating a 30-second Kimi
+    vision timeout can consume the whole per-task budget, so this path performs
+    no hidden transport retry; HTTP status failures may still move to the next
+    explicitly configured model in `_invoke_verified_payload`.
+    """
+
+    async with httpx.AsyncClient(timeout=VERIFIED_HTTP_TIMEOUT) as client:
+        response: httpx.Response | None = None
+        for attempt in range(VERIFIED_429_RETRIES + 1):
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if response.status_code == 429 and attempt < VERIFIED_429_RETRIES:
+                wait = _verified_429_wait(response, attempt)
+                if wait < 0:
+                    break
+                await asyncio.sleep(wait)
+                continue
+            response.raise_for_status()
+            return _verified_response_content(response.json())
+        assert response is not None
+        response.raise_for_status()
+        raise httpx.HTTPStatusError(
+            "429 not cleared", request=response.request, response=response
+        )
+
+
+def _verified_payload_uses_images(payload: dict[str, Any]) -> bool:
+    for message in payload.get("messages", []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
+        ):
+            return True
+    return False
+
+
+def _verified_429_wait(response: httpx.Response, attempt: int) -> float:
+    wait = _retry_after_seconds(response, attempt)
+    if wait < 0 or wait > VERIFIED_429_MAX_WAIT_S:
+        return -1.0
+    return wait
+
+
+def _verified_candidate_payload(
+    payload: dict[str, Any],
+    model: str,
+    *,
+    openrouter: bool = False,
+) -> dict[str, Any]:
+    """Adapt generation controls when a fallback changes model/provider."""
+
+    candidate = dict(payload)
+    candidate["model"] = model
+    uses_images = _verified_payload_uses_images(candidate)
+    model_name = model.casefold()
+    if openrouter:
+        candidate.pop("reasoning_effort", None)
+        if not uses_images and "gpt-oss" in model_name:
+            candidate["reasoning"] = {"effort": "low", "exclude": True}
+            candidate["max_tokens"] = max(
+                512, int(candidate.get("max_tokens", 0) or 0)
+            )
+        return candidate
+    if "deepseek-v4" in model_name:
+        candidate["reasoning_effort"] = "none"
+        candidate["max_tokens"] = min(
+            256, int(candidate.get("max_tokens", 256) or 256)
+        )
+    elif "gpt-oss" in model_name:
+        candidate["reasoning_effort"] = "low"
+        candidate["max_tokens"] = max(
+            384, int(candidate.get("max_tokens", 0) or 0)
+        )
+    return candidate
+
+
+async def _invoke_verified_payload(payload: dict[str, Any]) -> str:
+    if not FIREWORKS_API_KEY and not OPENROUTER_API_KEY:
+        raise RuntimeError("verified-short engine requires a provider API key")
+    last_error: Exception | None = None
+    uses_images = _verified_payload_uses_images(payload)
+    fallbacks = (
+        VERIFIED_VISION_FALLBACKS
+        if uses_images
+        else VERIFIED_WRITER_FALLBACKS
+    )
+    connection_failed = False
+    if FIREWORKS_API_KEY:
+        for model in _model_candidates(str(payload.get("model", "")), fallbacks):
+            candidate = _verified_candidate_payload(payload, model)
+            for connect_attempt in range(2):
+                try:
+                    return await _verified_chat_content_at(
+                        FIREWORKS_BASE_URL, FIREWORKS_API_KEY, candidate
+                    )
+                except httpx.TimeoutException as e:
+                    last_error = e
+                    connection_failed = True
+                    log.warning("verified-short model timed out (%s)", model)
+                    break
+                except httpx.ConnectError as e:
+                    last_error = e
+                    if connect_attempt == 0:
+                        log.warning(
+                            "verified-short connection failed (%s); retrying once",
+                            model,
+                        )
+                        await asyncio.sleep(0.35)
+                        continue
+                    connection_failed = True
+                    log.warning("verified-short connection failed twice (%s)", model)
+                    break
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    if e.response.status_code == 429:
+                        connection_failed = True
+                    log.warning("verified-short model failed (%s): %s", model, e)
+                    break
+                except httpx.HTTPError as e:
+                    last_error = e
+                    log.warning("verified-short model failed (%s): %s", model, e)
+                    break
+                except ValueError as e:
+                    last_error = e
+                    log.warning("verified-short model returned invalid output (%s): %s", model, e)
+                    break
+            if connection_failed:
+                # Fireworks timeouts, rate limits and DNS failures are host-level
+                # signals. Move providers instead of trying another model ID.
+                break
+
+    openrouter_model = (
+        VERIFIED_OPENROUTER_VISION_FALLBACK
+        if uses_images
+        else VERIFIED_OPENROUTER_WRITER_FALLBACK
+    )
+    if OPENROUTER_API_KEY and openrouter_model:
+        candidate = _verified_candidate_payload(
+            payload, openrouter_model, openrouter=True
+        )
+        try:
+            return await _verified_chat_content_at(
+                OPENROUTER_BASE_URL, OPENROUTER_API_KEY, candidate
+            )
+        except (httpx.HTTPError, ValueError) as e:
+            last_error = e
+            log.warning("verified-short OpenRouter fallback failed (%s): %s", openrouter_model, e)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("verified-short engine has no configured model")
 
 
 def _shrink_image_part(part: dict[str, Any], max_edge: int) -> dict[str, Any]:
