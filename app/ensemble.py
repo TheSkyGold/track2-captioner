@@ -64,11 +64,15 @@ SELECTOR_MODEL = os.environ.get("ENSEMBLE_SELECTOR", "")
 # to generics instead of DROPPING them (v16's mistake was hedging/deleting).
 FACT_CONSENSUS = os.environ.get("FACT_CONSENSUS", "0") != "0"
 _CONSENSUS_RULE = (
-    " SPECIFICS RULE: include a count, quoted on-screen text, a brand, an exact color, "
-    "or a proper name ONLY when at least two observer reports agree on it. If only one "
-    "observer reports such a specific, keep the event but state its generic form instead "
-    "('several people', 'a sign', 'a dog') - never drop the event, never shorten the "
-    "caption, never add hedging words."
+    " SPECIFICS SUBSTITUTION (word-level only): first compose each caption exactly as "
+    "you normally would - same events, same sentences, same richness, same length. THEN, "
+    "for any specific that only ONE observer reported (an exact count, quoted sign text, "
+    "a brand, an exact shade, a species/breed, a proper name), swap ONLY that word or "
+    "phrase for its generic equivalent: 'three cyclists'->'several cyclists', "
+    "'a Starbucks sign'->'a storefront sign', 'crimson'->'red', 'a border collie'->'a dog'. "
+    "Specifics that two or more observers agree on keep their exact form. This rule "
+    "changes WORDS, never sentences: removing a sentence, merging events, or writing a "
+    "shorter caption than you otherwise would is a violation."
 )
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
