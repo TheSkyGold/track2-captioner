@@ -351,6 +351,36 @@ class StylePromptTests(unittest.TestCase):
         self.assertNotIn("jewelry", low)
         self.assertNotIn("nails", low)
 
+    def test_observer_and_verifier_prioritize_distinctive_nonredundant_details(self) -> None:
+        assert verified_observer_system is not None
+        observer = verified_observer_system.lower()
+        verifier = verified_scene.VERIFIER_SYSTEM.lower()
+        for phrase in (
+            "distinctive appearance or markings",
+            "clothing and accessories",
+            "objects being handled or used",
+        ):
+            self.assertIn(phrase, observer)
+        self.assertIn("non-redundant distinctive details", verifier)
+        self.assertNotIn("nails", observer)
+        self.assertNotIn("jewelry", observer)
+
+    def test_style_prompt_packs_verified_detail_without_forcing_a_quota(self) -> None:
+        assert build_style_prompt is not None
+        facts = [
+            "A person types at a desk.",
+            "A large monitor stands in front of the person.",
+            "A pendant hangs from a necklace.",
+            "A leafy plant stands behind the desk.",
+        ]
+        for style in style_limits:
+            _, user = build_style_prompt(style, facts)
+            low = user.lower()
+            self.assertIn("as many useful, non-redundant verified details", low)
+            self.assertIn("never invent a detail to fill a quota", low)
+            self.assertIn("distinctive appearance", low)
+            self.assertIn("objects being handled or used", low)
+
     def test_all_official_styles_have_bounded_word_ranges(self) -> None:
         self.assertEqual(
             style_limits,
