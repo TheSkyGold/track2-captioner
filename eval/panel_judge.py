@@ -8,10 +8,14 @@ from pathlib import Path
 import httpx
 
 sys.stdout.reconfigure(encoding="utf-8")
-for line in open(".env"):
-    if line.startswith("OPENROUTER_API_KEY="):
-        os.environ.setdefault("OPENROUTER_API_KEY", line.partition("=")[2].strip())
-K = os.environ["OPENROUTER_API_KEY"]
+env_path = Path(".env")
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        if line.startswith("OPENROUTER_API_KEY="):
+            os.environ.setdefault("OPENROUTER_API_KEY", line.partition("=")[2].strip())
+K = os.environ.get("OPENROUTER_API_KEY", "").strip()
+if not K:
+    raise RuntimeError("OPENROUTER_API_KEY is required")
 
 JUDGES = ["google/gemini-3.1-pro-preview", "openai/gpt-5.5"]
 STYLE_DEFS = {

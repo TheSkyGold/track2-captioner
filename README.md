@@ -47,8 +47,10 @@ fact ledger only.
   the final Docker run; 0/12 fallbacks and every local output audit passed.
 - Broader local set: 12/12 rows, 48/48 captions in 272.8 seconds; 0/48
   fallbacks, with structure, quality, detail, and grounding audits all passing.
+- Eight public validation scenes scored by the local text-grounded GPT-5.5
+  mirror: 0.879 accuracy, 0.944 style match, 0.911 combined.
 
-These are runtime and generalization checks, not an official score. The guide
+These are runtime, generalization, and proxy checks, not an official score. The guide
 contains three public development clips; the announced evaluation uses a
 hidden set of about twelve clips.
 

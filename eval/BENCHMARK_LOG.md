@@ -12,6 +12,22 @@ noted):
 Never trust the old 8B `local_judge` — it scored wrong captions ~1.0. This log
 is the source of truth. Append a row after every audit; keep the best config at top.
 
+## 2026-07-11 public-eight mirror A/B
+
+GPT-5.5 applied the kit's text-grounded two-axis rubric to the eight retired
+public validation scenes. These are local proxy scores, never official scores.
+
+| Candidate | Accuracy | Style | Combined | Decision |
+|---|---:|---:|---:|---|
+| **V30 dense verified** | **0.879** | **0.944** | **0.911** | Keep |
+| Category-adaptive detail schema | 0.805 | 0.905 | 0.855 | Reject |
+| Central-subtype micro prompt | 0.816 | 0.922 | 0.869 | Reject |
+
+The rejected prompts recovered labels such as animal markings and a common
+ingredient, but promoted secondary details, increased repairs, and weakened
+creative captions. Keep the smaller V30 prompt until a broader A/B beats 0.911
+without lowering deterministic audit coverage.
+
 ## Results (best precision+detection first)
 
 | Date | Describe | Writer | Input | Precision | Detection (tot / per-cap) | Contra | Notes |

@@ -13,10 +13,14 @@ from pathlib import Path
 import httpx
 
 sys.stdout.reconfigure(encoding="utf-8")
-for line in open(".env"):
-    if line.startswith("OPENROUTER_API_KEY="):
-        os.environ.setdefault("OPENROUTER_API_KEY", line.partition("=")[2].strip())
-K = os.environ["OPENROUTER_API_KEY"]
+env_path = Path(".env")
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        if line.startswith("OPENROUTER_API_KEY="):
+            os.environ.setdefault("OPENROUTER_API_KEY", line.partition("=")[2].strip())
+K = os.environ.get("OPENROUTER_API_KEY", "").strip()
+if not K:
+    raise RuntimeError("OPENROUTER_API_KEY is required")
 GT_PATH = "out/scene_gt.json"
 JUDGE_MODEL = os.environ.get("MIRROR_JUDGE_MODEL", "openai/gpt-5.5")
 GT_MODEL = os.environ.get("GT_MODEL", "google/gemini-3.1-pro-preview")
@@ -110,10 +114,11 @@ async def build_gt(tasks_file, ids):
     print(f"\nwrote {GT_PATH} ({len(gt)} clips)")
 
 
-async def score(results_file):
+async def score(results_file, out_file=""):
     gt = json.load(open(GT_PATH, encoding="utf-8"))
     results = json.load(open(results_file, encoding="utf-8"))
     A, S = [], []
+    details = []
     per_style = {s: {"a": [], "s": []} for s in STYLE_DEFS}
     async with httpx.AsyncClient(timeout=120) as client:
         for r in results:
@@ -131,6 +136,12 @@ async def score(results_file):
                     print(f"  parse-fail {r['task_id']}/{style}: {txt[:60]}"); continue
                 A.append(a); S.append(s)
                 per_style[style]["a"].append(a); per_style[style]["s"].append(s)
+                details.append({
+                    "task_id": r["task_id"],
+                    "style": style,
+                    "caption": cap,
+                    **o,
+                })
                 print(f"{r['task_id']:12s} {style:18s} acc={a:.2f} sty={s:.2f}  {o.get('accuracy_reason','')[:55]}")
     print("\n===== MIRROR (official rubric) =====")
     for st, d in per_style.items():
@@ -139,6 +150,11 @@ async def score(results_file):
         print(f"  {st:18s} accuracy={am:.3f}  style={sm:.3f}")
     if A:
         print(f"\nOVERALL accuracy={statistics.mean(A):.3f}  style={statistics.mean(S):.3f}  FINAL={(statistics.mean(A)+statistics.mean(S))/2:.3f}")
+    if out_file:
+        Path(out_file).write_text(
+            json.dumps(details, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"wrote {out_file}")
 
 
 def main():
@@ -147,11 +163,12 @@ def main():
     ap.add_argument("--tasks")
     ap.add_argument("--ids")
     ap.add_argument("--results")
+    ap.add_argument("--out", default="")
     a = ap.parse_args()
     if a.build_gt:
         asyncio.run(build_gt(a.tasks, a.ids.split(",")))
     else:
-        asyncio.run(score(a.results))
+        asyncio.run(score(a.results, a.out))
 
 
 if __name__ == "__main__":
