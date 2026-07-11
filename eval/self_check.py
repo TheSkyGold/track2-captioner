@@ -28,20 +28,16 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.models import TECH_KEYWORDS, TECH_PHRASES
+
 REQUIRED_STYLES = ("formal", "sarcastic", "humorous_tech", "humorous_non_tech")
 
-_TECH_TERMS = {
-    "prod", "api", "algorithm", "algorithms", "commit", "merge conflict",
-    "rollback", "cache miss", "server", "servers", "24 fps", "staging",
-    "hot-reload", "hot reload", "null check", "eventual consistency",
-    "pull request", "pipeline", "deploy", "deploys", "kubernetes",
-    "docker", "regex", "http", "sql", "npm", "python", "javascript",
-}
+_TECH_TERMS = set(TECH_KEYWORDS) | set(TECH_PHRASES)
 
 _FIRST_SECOND_PERSON = re.compile(r"\b(i|we|us|our|you|your)\b", re.IGNORECASE)
 _EXCLAM = "!"
-_TECH_PHRASES = {t for t in _TECH_TERMS if " " in t or "-" in t}
-_TECH_WORDS = {t for t in _TECH_TERMS if t not in _TECH_PHRASES}
 
 
 def _looks_english(text: str) -> bool:
@@ -53,14 +49,15 @@ def _looks_english(text: str) -> bool:
 
 
 def _tech_hits(text: str) -> list[str]:
-    low = text.lower()
-    hits = [t for t in _TECH_PHRASES if t in low]
-    words = {
-        token.strip(".,!?;:()[]{}\"'`").lower()
-        for token in low.replace("/", " ").replace("-", " ").split()
-    }
-    hits.extend(sorted(words & _TECH_WORDS))
-    return sorted(set(hits))
+    return sorted(
+        term
+        for term in _TECH_TERMS
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _fail(errs: list[str], msg: str) -> None:

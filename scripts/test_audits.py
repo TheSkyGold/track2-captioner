@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eval.grounding_audit import audit_caption as audit_grounding
 from eval.quality_audit import audit_caption as audit_quality
+from eval.self_check import _tech_hits
 
 
 class AuditSemanticsTests(unittest.TestCase):
@@ -27,6 +32,12 @@ class AuditSemanticsTests(unittest.TestCase):
         )
 
         self.assertEqual(audit_grounding("v3", "humorous_tech", caption), [])
+
+    def test_everyday_staging_is_not_classified_as_tech_jargon(self) -> None:
+        caption = "The vegetable is staging a heroic last stand against the knife."
+
+        self.assertEqual(_tech_hits(caption), [])
+        self.assertEqual(audit_quality("7963468", "sarcastic", caption), [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 
 ## Short description
 
-> Two vision observers build facts, a pixel-level gate verifies them, and four fact-locked writers produce formal, sarcastic, tech-humorous, and everyday-humorous captions.
+> Three independent vision observers build facts, a pixel-level gate verifies them, and four fact-locked writers produce formal, sarcastic, tech-humorous, and everyday-humorous captions.
 
 ## Architecture
 
@@ -15,8 +15,9 @@ chronological frames, and always writes a complete `/output/results.json`.
 
 For every clip:
 
-1. GPT-5.5 and Gemini 3.1 Pro independently list high-confidence atomic facts
-   about the central subject, action/state, setting, and temporal change.
+1. GPT-5.5, Gemini 3.1 Pro, and Claude Opus 4.8 independently list
+   high-confidence atomic facts about the central subject, action/state,
+   setting, and temporal change.
 2. Local code assigns immutable fact IDs. GPT-5.5 re-reads the pixels and can
    keep IDs only. Free-form rewrites are impossible. Risky colors, counts,
    directions, OCR, brands, and breeds require independent corroboration.
@@ -37,10 +38,11 @@ the verified ledger rather than reintroducing unsupported scene details.
 ## Generalization and runtime
 
 Prompts contain no facts from the three public examples. The pipeline was
-stress-tested on twelve additional clips spanning animals, cities, water,
-mountains, weather, food, people, transport, and sports. It completed in 245.6
-seconds and produced 12 valid rows and 48/48 captions. This is local evidence;
-the official hidden score can only come from the competition judge.
+stress-tested on a broader twelve-clip local set spanning animals, cities,
+water, terrain, weather, food, people, transport, and sports. It completed in
+272.8 seconds and produced 12 valid rows and 48/48 captions with zero fallback;
+all structural, quality, detail, and grounding audits passed. This is local
+evidence; the official hidden score can only come from the competition judge.
 
 ## Reliability
 
@@ -48,7 +50,8 @@ the official hidden score can only come from the competition judge.
 - OpenRouter-only submission profile; no Groq or Fireworks credential.
 - Three clips concurrently; six API calls maximum in flight.
 - Wall-clock stage deadlines include queue wait.
-- One bounded retry only for 429/5xx, never auth/payment failures.
+- One bounded retry for transient transport errors or 429/5xx responses, never
+  auth/payment failures.
 - Per-task deadline 125 seconds; global deadline 535 seconds.
 - Pre-seeded results, schema validation, and atomic output replacement.
 

@@ -13,6 +13,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.models import TECH_DETECT_EXTRA, TECH_KEYWORDS, TECH_PHRASES
+
 
 AI_TELL_PHRASES = {
     "a modest triumph for moving pictures",
@@ -56,37 +60,8 @@ GENERIC_CAPTION_PATTERNS = [
     re.compile(r"\bthe scene (shows|depicts)\b", re.I),
 ]
 
-TECH_TERMS = {
-    "api",
-    "algorithm",
-    "cache",
-    "code",
-    "commit",
-    "deploy",
-    "docker",
-    "fps",
-    "git",
-    "ide",
-    "kubernetes",
-    "latency",
-    "logs",
-    "pipeline",
-    "prod",
-    "production",
-    "queue",
-    "rollback",
-    "runtime",
-    "scheduler",
-    "server",
-    "staging",
-}
-
-
-def _words(text: str) -> set[str]:
-    return {
-        token.strip(".,!?;:()[]{}\"'`").lower()
-        for token in text.replace("/", " ").replace("-", " ").split()
-    }
+BANNED_TECH_TERMS = set(TECH_KEYWORDS) | set(TECH_PHRASES)
+TECH_REFERENCE_TERMS = BANNED_TECH_TERMS | set(TECH_DETECT_EXTRA)
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -97,6 +72,10 @@ def _contains_term(text: str, term: str) -> bool:
     ) is not None
 
 
+def _contains_any_term(text: str, terms: set[str]) -> bool:
+    return any(_contains_term(text, term) for term in terms)
+
+
 def audit_caption(task_id: str, style: str, caption: str) -> list[str]:
     issues: list[str] = []
     if any(_contains_term(caption, phrase) for phrase in AI_TELL_PHRASES):
@@ -105,11 +84,12 @@ def audit_caption(task_id: str, style: str, caption: str) -> list[str]:
         issues.append("low_taste_or_sensitive_phrase")
     if any(pattern.search(caption) for pattern in GENERIC_CAPTION_PATTERNS):
         issues.append("generic_caption")
-    if style == "humorous_non_tech" and (_words(caption) & TECH_TERMS):
+    has_banned_tech = _contains_any_term(caption, BANNED_TECH_TERMS)
+    if style == "humorous_non_tech" and has_banned_tech:
         issues.append("non_tech_style_bleed")
-    if style == "sarcastic" and (_words(caption) & TECH_TERMS):
+    if style == "sarcastic" and has_banned_tech:
         issues.append("sarcastic_tech_bleed")
-    if style == "humorous_tech" and not (_words(caption) & TECH_TERMS):
+    if style == "humorous_tech" and not _contains_any_term(caption, TECH_REFERENCE_TERMS):
         issues.append("tech_style_missing_tech_reference")
     if style == "formal" and len(caption.split()) < 10:
         issues.append("formal_too_thin")

@@ -23,8 +23,8 @@ The submission profile is `CAPTION_ENGINE=ensemble` with
 
 1. FFmpeg samples eight chronological frames and provides timestamp labels
    beside, never over, the pixels.
-2. GPT-5.5 and Gemini 3.1 Pro independently list 2-12 high-confidence atomic
-   observations.
+2. GPT-5.5, Gemini 3.1 Pro, and Claude Opus 4.8 independently list 2-12
+   high-confidence atomic observations.
 3. Local code assigns immutable fact IDs. GPT-5.5 re-reads the frames and may
    keep existing IDs only; it cannot rewrite or create a fact.
 4. Risky colors, counts, directions, OCR, brands, and breeds require
@@ -42,11 +42,11 @@ fact ledger only.
 
 ## Evidence
 
-- Targeted v30 suite: 40 unit/integration tests.
-- Public examples: 3/3 completed through the verified path in 63.2 seconds in
-  the final Docker run; all three local output audits passed.
-- Broader local set: 12/12 rows, 48/48 captions, 245.6 seconds, structural
-  self-check passed.
+- Targeted v30 suite: 45 unit/integration tests plus four audit-semantics tests.
+- Public examples: 3/3 completed through the verified path in 73.2 seconds in
+  the final Docker run; 0/12 fallbacks and every local output audit passed.
+- Broader local set: 12/12 rows, 48/48 captions in 272.8 seconds; 0/48
+  fallbacks, with structure, quality, detail, and grounding audits all passing.
 
 These are runtime and generalization checks, not an official score. The guide
 contains three public development clips; the announced evaluation uses a
@@ -103,7 +103,7 @@ python scripts/preflight.py --strict --docker-build --docker-run
 |---|---|
 | `CAPTION_ENGINE` | `ensemble` |
 | `VERIFIED_SCENE_GATE` | `1` |
-| `ENSEMBLE_OBSERVERS` | `openai/gpt-5.5,google/gemini-3.1-pro-preview` |
+| `ENSEMBLE_OBSERVERS` | `openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.8` |
 | `VERIFIED_SCENE_MODEL` | `openai/gpt-5.5` |
 | `VERIFIED_WRITER_MODEL` | `anthropic/claude-opus-4.8` |
 | `VERIFIED_REPAIR_MODEL` | `anthropic/claude-opus-4.8` |
