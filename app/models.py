@@ -20,6 +20,7 @@ TECH_KEYWORDS = {
     # bugs and restaurant servers kept nuking rich captions. The writer prompt
     # already bans tech senses; this list is only a net for hard jargon.
     "api",
+    "app",
     "algorithm",
     "algorithms",
     "backend",
@@ -35,6 +36,7 @@ TECH_KEYWORDS = {
     "gpu",
     "http",
     "ide",
+    "instagram",
     # ponytail: "it" (the pronoun) was here — a top-frequency English word that
     # false-flagged most sarcastic/humorous_non_tech captions as tech jargon and
     # forced hardcoded fallbacks. "IT" as a domain term isn't worth that damage.
@@ -51,8 +53,10 @@ TECH_KEYWORDS = {
     "rollback",
     "software",
     "sql",
+    "tiktok",
     "scheduler",
     "runtime",
+    "youtube",
 }
 TECH_PHRASES = {
     "24 fps",
@@ -63,6 +67,9 @@ TECH_PHRASES = {
     "hot-reload",
     "null check",
     "pull request",
+    "instagram filter",
+    "social media",
+    "tiktok dance",
 }
 FIRST_SECOND_PERSON = {"i", "we", "us", "our", "you", "your"}
 SENSITIVE_APPEARANCE_TERMS = {
@@ -356,12 +363,16 @@ _PLAIN_TECH_PHRASES = {
     "hot-reload": "instant refresh",
     "null check": "a missing-value check",
     "pull request": "a proposed change",
+    "instagram filter": "storybook splash of color",
+    "social media": "online chatter",
+    "tiktok dance": "little dance",
 }
 
 _PLAIN_TECH_WORDS = {
     "algorithm": "method",
     "algorithms": "methods",
     "api": "interface",
+    "app": "phone program",
     "backend": "behind-the-scenes system",
     "ci": "automated check",
     "ci/cd": "automated release process",
@@ -375,6 +386,7 @@ _PLAIN_TECH_WORDS = {
     "gpu": "graphics hardware",
     "http": "web connection",
     "ide": "code editor",
+    "instagram": "photo album",
     "javascript": "computer language",
     "kubernetes": "cluster platform",
     "latency": "delay",
@@ -387,15 +399,19 @@ _PLAIN_TECH_WORDS = {
     "scheduler": "planner",
     "software": "computer program",
     "sql": "data query",
+    "tiktok": "popular trend",
+    "youtube": "video site",
 }
 
 
 def _rewrite_tech_jargon_as_plain_language(text: str) -> str:
     """Preserve visible technology facts while removing style-banned jargon."""
     repaired = text
-    for phrase, replacement in _PLAIN_TECH_PHRASES.items():
+    for phrase in sorted(_PLAIN_TECH_PHRASES, key=len, reverse=True):
+        replacement = _PLAIN_TECH_PHRASES[phrase]
         repaired = re.sub(rf"\b{re.escape(phrase)}\b", replacement, repaired, flags=re.I)
-    for word, replacement in _PLAIN_TECH_WORDS.items():
+    for word in sorted(_PLAIN_TECH_WORDS, key=len, reverse=True):
+        replacement = _PLAIN_TECH_WORDS[word]
         repaired = re.sub(rf"\b{re.escape(word)}\b", replacement, repaired, flags=re.I)
     return " ".join(repaired.split())
 
@@ -439,6 +455,12 @@ def _mentions_sensitive_appearance(text: str) -> bool:
     if _PERSON_APPEARANCE.search(text):
         return True
     return _matches_term_list(text, SENSITIVE_APPEARANCE_TERMS)
+
+
+def _rewrite_sensitive_appearance_as_neutral(text: str) -> str:
+    """Keep visible scene facts while removing an identity-linked hair label."""
+    repaired = re.sub(r"\bafro(?:\s+hairstyle)?\b", "curly hair", text, flags=re.I)
+    return " ".join(repaired.split())
 
 
 def _contains_low_taste_term(text: str) -> bool:
@@ -515,6 +537,10 @@ def normalize_captions(
         else:
             min_words = 1
         too_short = len(text.split()) < min_words
+        if text and _mentions_sensitive_appearance(text):
+            repaired = _rewrite_sensitive_appearance_as_neutral(text)
+            if repaired != text:
+                text = repaired
         if text and not caption_passes_style_filter(style, text):
             repaired = strip_uncertainty_fillers(text)
             if repaired != text and caption_passes_style_filter(style, repaired):

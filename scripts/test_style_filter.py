@@ -65,6 +65,26 @@ def demo() -> None:
         assert "dashboard" in repaired.lower(), f"visible dashboard lost [{style}]: {repaired!r}"
         assert "graph" in repaired.lower(), f"visible graph lost [{style}]: {repaired!r}"
         assert not _has_tech_jargon(repaired), f"jargon survived repair [{style}]: {repaired!r}"
+
+    off_scene_tech_joke = (
+        "This kitten is a walking Instagram filter doing a tiny TikTok dance through leaves."
+    )
+    repaired_joke = normalize_captions(
+        {"humorous_non_tech": off_scene_tech_joke}, ["humorous_non_tech"]
+    )["humorous_non_tech"]
+    assert "kitten" in repaired_joke.lower(), repaired_joke
+    assert "dance" in repaired_joke.lower(), repaired_joke
+    assert "instagram" not in repaired_joke.lower(), repaired_joke
+    assert "tiktok" not in repaired_joke.lower(), repaired_joke
+    assert not _has_tech_jargon(repaired_joke), repaired_joke
+
+    sensitive_hair = "A woman with an afro types on a keyboard in a modern office."
+    for style in ("formal", "humorous_non_tech"):
+        repaired_hair = normalize_captions({style: sensitive_hair}, [style])[style]
+        assert "keyboard" in repaired_hair.lower(), f"keyboard lost [{style}]: {repaired_hair!r}"
+        assert "office" in repaired_hair.lower(), f"office lost [{style}]: {repaired_hair!r}"
+        assert "afro" not in repaired_hair.lower(), f"identity label survived [{style}]: {repaired_hair!r}"
+        assert caption_passes_style_filter(style, repaired_hair), repaired_hair
     print(f"STYLE-FILTER OK - {len(CLEAN)} clean + {len(TECH)} tech captions classified correctly; no cross-clip fallback leak.")
 
 

@@ -50,7 +50,9 @@ required = (
     "not a hard maximum",
     "at least two independent observation lists",
     "same ordered spine facts",
+    "one-for-one coverage audit",
     "literal visible technology remains factual scene content",
+    "never mention absent or not-visible entities",
     "one clearly non-literal",
     "55-90 words",
 )
@@ -83,14 +85,17 @@ old `FACT PARITY CONTRACT`.
 The rule must state all of the following directly: at least five ordered core
 facts with no hard maximum for complex clips, two-observer support for high-risk
 specifics, safe generalization of a generic single-observer detail, all spine
-facts in every style, one non-literal clause, and non-binding 55-90-word guidance.
+facts in every style, a one-for-one coverage audit, one non-literal clause, a
+ban on absent/not-visible entities, and non-binding 55-90-word guidance.
 
 - [ ] **Step 2: Preserve technology facts when jargon is rejected**
 
-Add a failing normalization test for a visible dashboard described with
-`developer`, `GPU`, `IDE`, and `CPU`. Implement whole-word plain-language
-rewrites before fallback so the dashboard and graph remain while the banned
-jargon becomes `worker`, `graphics hardware`, `code editor`, and `processor`.
+Add failing normalization tests for a visible dashboard described with
+`developer`, `GPU`, `IDE`, and `CPU`; an off-scene Instagram/TikTok joke; and an
+otherwise accurate office caption containing `afro`. Implement whole-word
+plain-language rewrites before fallback so the factual dashboard, graph,
+kitten, movement, keyboard, and office remain while jargon, off-scene platform
+metaphors, and the identity-linked hairstyle label are neutralized.
 
 - [ ] **Step 3: Correct the style definitions**
 
@@ -145,8 +150,7 @@ git commit -m "feat: gate captions on a consensus fact spine"
 
 ```bash
 cd /workspace/track2-captioner
-git fetch pub codex/v32-v19-fact-parity
-git reset --hard pub/codex/v32-v19-fact-parity
+git -c http.sslVerify=false pull --ff-only origin codex/v32-v19-fact-parity
 ```
 
 - [ ] **Step 2: Run the exact paired three-clip profile against the local endpoint**
@@ -162,6 +166,10 @@ python -u scripts/fact_parity_ab.py --tasks data/sample_tasks.json \
 ```
 
 Expected: three checkpoints, 12 captions per arm, zero static fallbacks.
+
+This repeated-Qwen run is a zero-credit regression screen, not a production
+quality estimate. Before submission, repeat a live sample smoke with the actual
+three distinct observers and writer settings embedded in the image.
 
 - [ ] **Step 3: Apply the acceptance gates**
 
