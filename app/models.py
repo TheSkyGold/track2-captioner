@@ -7,7 +7,7 @@ from typing import Any
 
 # Hard length cap for a caption. 300 suits the concise pipeline; the ensemble
 # engine writes long richly-detailed captions, so it raises this via env.
-MAX_CAPTION_CHARS = int(os.environ.get("MAX_CAPTION_CHARS", "300"))
+MAX_CAPTION_CHARS = int(os.environ.get("MAX_CAPTION_CHARS", "420"))
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 

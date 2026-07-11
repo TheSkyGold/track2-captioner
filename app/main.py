@@ -42,6 +42,7 @@ OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
 
 # Hard budget per task (leaves margin under the 30 s/request harness limit).
 PER_TASK_TIMEOUT_S = float(os.environ.get("PER_TASK_TIMEOUT_S", "25"))
+MIN_TASK_START_S = float(os.environ.get("MIN_TASK_START_S", "10"))
 # Max concurrent videos processed in parallel. Keep low to avoid rate limits.
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "3"))
 # The judging harness kills the WHOLE run at 10 minutes; a partially-degraded
@@ -78,15 +79,24 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
         # Never run past the global budget: shrink this task's timeout to what
         # is left, and skip straight to fallbacks when the budget is spent.
         task_timeout = min(PER_TASK_TIMEOUT_S, _remaining_budget())
-        if task_timeout < 10:
+        if task_timeout < MIN_TASK_START_S:
             log.warning("[%s] global budget spent - emitting fallback captions", task_id)
             return {"task_id": task_id, "captions": normalize_captions(_empty_caption_set(styles), styles)}
+        loop = asyncio.get_running_loop()
+        task_deadline = loop.time() + task_timeout
+
+        def remaining_task_time() -> float:
+            return max(
+                0.001,
+                min(task_deadline - loop.time(), _remaining_budget()),
+            )
+
         try:
             if CAPTION_ENGINE == "ensemble":
                 try:
                     captions = await asyncio.wait_for(
                         caption_ensemble(video_url=video_url, styles=styles),
-                        timeout=task_timeout,
+                        timeout=remaining_task_time(),
                     )
                 except Exception as e:  # noqa: BLE001
                     # Ensemble needs paid frontier APIs; on any failure (e.g. 402
@@ -95,12 +105,12 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
                     log.warning("[%s] ensemble failed (%s); falling back to pipeline", task_id, e)
                     captions = await asyncio.wait_for(
                         caption_one_video(video_url=video_url, styles=styles),
-                        timeout=min(PER_TASK_TIMEOUT_S, _remaining_budget()),
+                        timeout=remaining_task_time(),
                     )
             else:
                 captions = await asyncio.wait_for(
                     caption_one_video(video_url=video_url, styles=styles),
-                    timeout=task_timeout,
+                    timeout=remaining_task_time(),
                 )
         except asyncio.TimeoutError:
             log.warning("[%s] TIMEOUT after %.1fs - emitting fallback captions", task_id, task_timeout)
@@ -167,7 +177,22 @@ async def _amain() -> int:
             _flush()
         return row
 
-    results = await asyncio.gather(*(_run_and_record(t) for t in tasks_in))
+    workers = [asyncio.create_task(_run_and_record(task)) for task in tasks_in]
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*workers),
+            timeout=max(0.001, _remaining_budget()),
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "Global %.1fs budget exhausted; preserving pre-seeded results",
+            GLOBAL_BUDGET_S,
+        )
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+
+    results = list(results_by_id.values())
 
     validated = validate_results(results)
     OUTPUT_PATH.write_text(

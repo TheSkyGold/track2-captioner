@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,55 @@ def _inspect_image(image: str) -> bool:
     return _record("docker image inspect", ok, out)
 
 
+def _inspect_submission_profile(image: str) -> bool:
+    proc = subprocess.run(
+        ["docker", "inspect", image, "--format", "{{json .Config.Env}}"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return _record("docker v30 profile", False, "unable to inspect image environment")
+    values: dict[str, str] = {}
+    for item in json.loads(proc.stdout):
+        name, separator, value = item.partition("=")
+        if separator:
+            values[name] = value
+    expected = {
+        "CAPTION_ENGINE": "ensemble",
+        "VERIFIED_SCENE_GATE": "1",
+        "VERIFIED_SCENE_MODEL": "openai/gpt-5.5",
+        "VERIFIED_WRITER_MODEL": "anthropic/claude-opus-4.8",
+        "VERIFIED_REPAIR_MODEL": "anthropic/claude-opus-4.8",
+        "VERIFIED_AUDIT": "1",
+        "VERIFIED_AUDITOR_MODEL": "openai/gpt-5.5",
+        "OPENROUTER_VLM_MODEL": "openai/gpt-5.5",
+        "OPENROUTER_STYLE_MODEL": "anthropic/claude-opus-4.8",
+        "PROVIDER_ORDER": "openrouter",
+        "STYLE_PROVIDER_ORDER": "openrouter",
+        "MAX_CAPTION_CHARS": "420",
+        "NUM_FRAMES": "8",
+        "FRAME_MAX_EDGE": "768",
+        "MAX_CONCURRENCY": "3",
+        "PER_TASK_TIMEOUT_S": "125",
+        "GLOBAL_BUDGET_S": "535",
+    }
+    mismatches = [
+        f"{name}={values.get(name)!r}" for name, expected_value in expected.items()
+        if values.get(name) != expected_value
+    ]
+    mismatches.extend(
+        f"{name}=must_be_absent"
+        for name in ("GROQ_API_KEY", "FIREWORKS_API_KEY")
+        if values.get(name)
+    )
+    return _record(
+        "docker v30 profile",
+        not mismatches,
+        ", ".join(mismatches) if mismatches else f"{len(expected)} pinned settings",
+    )
+
+
 def _docker_contract_run(image: str) -> bool:
     input_dir = ROOT / "in" / "preflight"
     output_dir = ROOT / "out" / "docker_preflight"
@@ -118,8 +168,13 @@ def _env_present(name: str) -> bool:
 
 
 def _check_no_secret_literals() -> bool:
-    patterns = ("fw_", "gsk_", "sk-", "xoxb-", "ghp_")
-    allowed_examples = ("fw_xxx",)
+    patterns = {
+        "fw_": re.compile(r"\bfw_[A-Za-z0-9_-]{12,}"),
+        "gsk_": re.compile(r"\bgsk_[A-Za-z0-9_-]{12,}"),
+        "sk-": re.compile(r"\bsk-(?:or-v1-)?[A-Za-z0-9_-]{12,}"),
+        "xoxb-": re.compile(r"\bxoxb-[A-Za-z0-9_-]{12,}"),
+        "ghp_": re.compile(r"\bghp_[A-Za-z0-9_-]{12,}"),
+    }
     offenders: list[str] = []
     for path in ROOT.rglob("*"):
         if not path.is_file():
@@ -135,9 +190,9 @@ def _check_no_secret_literals() -> bool:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        for pat in patterns:
-            if pat in text and not any(example in text for example in allowed_examples):
-                offenders.append(f"{rel}:{pat}")
+        for label, pattern in patterns.items():
+            if pattern.search(text):
+                offenders.append(f"{rel}:{label}")
                 break
     return _record("secret literal scan", not offenders, ", ".join(offenders[:10]) if offenders else "no obvious secret literals")
 
@@ -177,6 +232,8 @@ def main() -> int:
             "app/audio.py",
             "app/frames.py",
             "app/cache.py",
+            "app/ensemble.py",
+            "app/verified_scene.py",
             "eval/local_judge.py",
             "eval/grounding_audit.py",
             "eval/quality_audit.py",
@@ -184,6 +241,7 @@ def main() -> int:
             "scripts/contract_test.py",
             "scripts/quality_gate.py",
             "scripts/mock_run.py",
+            "scripts/test_verified_scene_gate.py",
             "finetune/build_dataset_v2.py",
             "finetune/generate_scenes.py",
             "finetune/train_gemma_lora.py",
@@ -191,6 +249,11 @@ def main() -> int:
         ],
     )
     ok &= _run("contract test", [PY, "scripts/contract_test.py"])
+    ok &= _run(
+        "verified scene gate tests",
+        [PY, "scripts/test_verified_scene_gate.py"],
+        env={"PYTHONPATH": str(ROOT)},
+    )
     ok &= _run("mock run", [PY, "scripts/mock_run.py", "--tasks", "data/sample_tasks.json", "--out", "out/mock_results.json"])
     ok &= _run("mock self-check", [PY, "eval/self_check.py", "--results", "out/mock_results.json"])
     ok &= _run("mock quality audit", [PY, "eval/quality_audit.py", "--results", "out/mock_results.json"])
@@ -217,23 +280,26 @@ def main() -> int:
     docker_ok = _docker_daemon_available()
     fw_ok = _env_present("FIREWORKS_API_KEY")
     groq_ok = _env_present("GROQ_API_KEY")
+    openrouter_ok = _env_present("OPENROUTER_API_KEY")
 
     if args.docker_build and docker_ok:
         image = os.environ.get("IMAGE", "track2-captioner:dev")
         ok &= _run("docker build linux/amd64", ["docker", "buildx", "build", "--platform", "linux/amd64", "--tag", image, "--load", "."])
         ok &= _inspect_image(image)
+        ok &= _inspect_submission_profile(image)
     elif args.docker_build:
         ok = False
 
     if args.docker_run and docker_ok:
         image = os.environ.get("IMAGE", "track2-captioner:dev")
         ok &= _inspect_image(image)
+        ok &= _inspect_submission_profile(image)
         ok &= _docker_contract_run(image)
     elif args.docker_run:
         ok = False
 
     if args.strict:
-        ok &= docker_ok and fw_ok
+        ok &= docker_ok and openrouter_ok
 
     print("\n== Summary")
     for name, status, note in CHECKS:

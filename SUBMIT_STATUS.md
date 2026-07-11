@@ -1,6 +1,21 @@
 # Submit Status
 
-Last checked locally: 2026-07-09 Europe/Paris.
+Last checked locally: 2026-07-11 Europe/Paris.
+
+## Current v30 status
+
+- Verified Scene Gate implemented and enabled in the Dockerfile.
+- Targeted suite: 40 tests covering provenance, risky-attribute corroboration,
+  prompts, selective repair/re-audit, concurrency, retries, and hard deadlines.
+- Public examples: 3/3 completed through the verified path in 63.2 seconds in
+  the final Docker benchmark; self-check, quality, and grounding audits all pass.
+- Broader local set: 12/12 rows, 48/48 captions, 245.6 seconds, self-check OK.
+- The exact official score remains unknown until the newly published image is
+  evaluated. Local proxy scores are not presented as official.
+- The final image is linux/amd64, 252.5 MB uncompressed by Docker inspection,
+  and ready for registry publication.
+
+The entries below are retained as historical v29 and earlier experiment notes.
 
 ## ⚠️ CRITICAL before the jury runs the image — API credits
 

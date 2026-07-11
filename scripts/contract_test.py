@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app import models
 from app.models import (
     REQUIRED_STYLES,
     caption_passes_style_filter,
@@ -13,9 +14,25 @@ from app.models import (
     validate_results,
 )
 from app.pipeline import _model_candidates, _provider_order
+from app.verified_scene import (
+    HARD_MIN_WORDS,
+    MAX_VERIFIED_CAPTION_CHARS,
+    STYLE_LIMITS,
+    caption_quality_issues,
+)
 
 
 def main() -> None:
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert "ARG GROQ_API_KEY" not in dockerfile
+    assert "ARG FIREWORKS_API_KEY" not in dockerfile
+    assert "GROQ_API_KEY=${GROQ_API_KEY}" not in dockerfile
+    assert "FIREWORKS_API_KEY=${FIREWORKS_API_KEY}" not in dockerfile
+    assert "PROVIDER_ORDER=openrouter \\" in dockerfile
+    assert "STYLE_PROVIDER_ORDER=openrouter \\" in dockerfile
+
     tasks = parse_tasks(
         [
             {
@@ -44,7 +61,7 @@ def main() -> None:
     assert captions["formal"] == facts["summary"]
     assert "production" not in captions["sarcastic"].lower()
     assert caption_passes_style_filter("humorous_non_tech", captions["humorous_non_tech"])
-    assert len(normalize_captions({"formal": "x" * 400}, ["formal"])["formal"]) <= 300
+    assert len(normalize_captions({"formal": "x" * 500}, ["formal"])["formal"]) <= models.MAX_CAPTION_CHARS
     assert "docker" not in normalize_captions(
         {"humorous_non_tech": "Docker deploys dinner."},
         ["humorous_non_tech"],
@@ -70,6 +87,15 @@ def main() -> None:
     assert _provider_order()
     assert _provider_order("describe")
     assert _provider_order("style")
+    assert set(STYLE_LIMITS) == set(REQUIRED_STYLES)
+    assert set(HARD_MIN_WORDS) == set(REQUIRED_STYLES)
+    assert MAX_VERIFIED_CAPTION_CHARS == 420
+    for style, (_, maximum) in STYLE_LIMITS.items():
+        minimum = HARD_MIN_WORDS[style]
+        at_minimum = " ".join(f"word{i}" for i in range(minimum))
+        above_maximum = " ".join(f"word{i}" for i in range(maximum + 1))
+        assert "too_few_words" not in caption_quality_issues(style, at_minimum)
+        assert "too_many_words" in caption_quality_issues(style, above_maximum)
 
     validated = validate_results([{"task_id": "demo", "captions": captions}])
     assert validated[0]["task_id"] == "demo"

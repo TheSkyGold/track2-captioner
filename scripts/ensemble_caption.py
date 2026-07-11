@@ -36,9 +36,9 @@ OR_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
 OBSERVERS = os.environ.get(
     "ENSEMBLE_OBSERVERS",
-    "openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5",
+    "openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.8",
 ).split(",")
-WRITER = os.environ.get("ENSEMBLE_WRITER", "anthropic/claude-opus-4.5")
+WRITER = os.environ.get("ENSEMBLE_WRITER", "anthropic/claude-opus-4.8")
 
 OBSERVE_SYSTEM = """You are a meticulous visual analyst. You see frames sampled
 in order from ONE short video clip. Return a JSON array of SHORT strings, one

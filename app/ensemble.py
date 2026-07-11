@@ -22,6 +22,12 @@ from typing import Any
 import httpx
 
 from app import pipeline as P
+from app.verified_scene import (
+    AUDITOR_SYSTEM,
+    VERIFIER_SYSTEM,
+    VERIFIED_OBSERVER_SYSTEM,
+    generate_verified_captions,
+)
 
 log = logging.getLogger("track2.ensemble")
 
@@ -29,9 +35,43 @@ OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 OBSERVERS = [m.strip() for m in os.environ.get(
     "ENSEMBLE_OBSERVERS",
-    "openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5",
+    "openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.8",
 ).split(",") if m.strip()]
-WRITER = os.environ.get("ENSEMBLE_WRITER", "anthropic/claude-opus-4.5")
+WRITER = os.environ.get("ENSEMBLE_WRITER", "anthropic/claude-opus-4.8")
+VERIFIED_SCENE_GATE = os.environ.get("VERIFIED_SCENE_GATE", "0") != "0"
+VERIFIER_MODEL = os.environ.get("VERIFIED_SCENE_MODEL", "openai/gpt-5.5")
+VERIFIED_WRITER_MODEL = os.environ.get(
+    "VERIFIED_WRITER_MODEL", "anthropic/claude-opus-4.8"
+)
+REPAIR_MODEL = os.environ.get(
+    "VERIFIED_REPAIR_MODEL", "anthropic/claude-opus-4.8"
+)
+VERIFIED_AUDIT = os.environ.get("VERIFIED_AUDIT", "1") != "0"
+AUDITOR_MODEL = (
+    os.environ.get("VERIFIED_AUDITOR_MODEL", "openai/gpt-5.5")
+    if VERIFIED_AUDIT
+    else ""
+)
+API_MAX_INFLIGHT = max(1, int(os.environ.get("OPENROUTER_MAX_INFLIGHT", "6")))
+HTTP_RETRIES = max(0, int(os.environ.get("OPENROUTER_HTTP_RETRIES", "1")))
+RETRY_MAX_WAIT_S = max(0.0, float(os.environ.get("OPENROUTER_RETRY_MAX_WAIT_S", "2")))
+OBSERVER_TIMEOUT_S = max(1.0, float(os.environ.get("ENSEMBLE_OBSERVER_TIMEOUT_S", "28")))
+LEGACY_WRITER_TIMEOUT_S = max(
+    1.0, float(os.environ.get("ENSEMBLE_WRITER_TIMEOUT_S", "28"))
+)
+
+_API_SEMAPHORE: asyncio.Semaphore | None = None
+_API_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _openrouter_semaphore() -> asyncio.Semaphore:
+    """Return one process-wide semaphore bound to the active event loop."""
+    global _API_SEMAPHORE, _API_SEMAPHORE_LOOP
+    loop = asyncio.get_running_loop()
+    if _API_SEMAPHORE is None or _API_SEMAPHORE_LOOP is not loop:
+        _API_SEMAPHORE = asyncio.Semaphore(API_MAX_INFLIGHT)
+        _API_SEMAPHORE_LOOP = loop
+    return _API_SEMAPHORE
 # Leaderboard hedge: an unknown judge may reward concise captions on style-match.
 # ENSEMBLE_CONCISE=1 keeps the verified-detail advantage but caps each caption to
 # 2-3 dense sentences instead of a long paragraph.
@@ -160,16 +200,79 @@ async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any
                 timeout_s: float | None = None) -> str:
     # Per-stage deadline: without it one slow provider eats the whole 150s task
     # budget and the run degrades to the single-model fallback (short captions).
-    r = await client.post(
-        f"{OR_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {OR_KEY}", "Content-Type": "application/json"},
-        json={"model": model, "messages": [
-            {"role": "system", "content": system}, {"role": "user", "content": content}],
-            "temperature": temperature, "max_tokens": max_tokens},
-        timeout=timeout_s if timeout_s else httpx.USE_CLIENT_DEFAULT,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s if timeout_s else None
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if system in {VERIFIER_SYSTEM, AUDITOR_SYSTEM}:
+        payload["response_format"] = {"type": "json_object"}
+        payload["reasoning"] = {"effort": "minimal", "exclude": True}
+
+    async def post_once() -> httpx.Response:
+        if deadline is None:
+            async with _openrouter_semaphore():
+                return await client.post(
+                    f"{OR_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OR_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=httpx.USE_CLIENT_DEFAULT,
+                )
+        # A transport read timeout is not a wall-clock deadline: some providers
+        # send whitespace heartbeats indefinitely. Include queueing and the HTTP
+        # request inside one absolute asyncio deadline.
+        async with asyncio.timeout_at(deadline):
+            async with _openrouter_semaphore():
+                remaining_after_queue = deadline - loop.time()
+                if remaining_after_queue <= 0:
+                    raise asyncio.TimeoutError(
+                        f"{model} exceeded its {timeout_s}s stage budget"
+                    )
+                return await client.post(
+                    f"{OR_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OR_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=remaining_after_queue,
+                )
+
+    for attempt in range(HTTP_RETRIES + 1):
+        remaining = deadline - loop.time() if deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            raise asyncio.TimeoutError(f"{model} exceeded its {timeout_s}s stage budget")
+        r = await post_once()
+        transient = r.status_code == 429 or 500 <= r.status_code < 600
+        if transient and attempt < HTTP_RETRIES:
+            try:
+                wait_s = float(r.headers.get("Retry-After", "0.25"))
+            except (TypeError, ValueError):
+                wait_s = 0.25
+            wait_s = min(max(0.0, wait_s), RETRY_MAX_WAIT_S)
+            if deadline is not None:
+                wait_s = min(wait_s, max(0.0, deadline - loop.time()))
+            log.warning(
+                "%s returned HTTP %s; retrying once in %.2fs",
+                model,
+                r.status_code,
+                wait_s,
+            )
+            if wait_s:
+                await asyncio.sleep(wait_s)
+            continue
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+    raise RuntimeError("unreachable retry state")
 
 
 TIMESTAMP_TEXT = os.environ.get("TIMESTAMP_TEXT", "0") != "0"
@@ -236,8 +339,17 @@ async def caption_ensemble_frames(
     async with httpx.AsyncClient(timeout=httpx.Timeout(240.0)) as client:
         async def observe(model: str) -> tuple[str, list[str]]:
             try:
-                return model, _parse_list(await _call(client, model, OBSERVE_SYSTEM,
-                                                      content, 4000, timeout_s=70.0))
+                observer_system = (
+                    VERIFIED_OBSERVER_SYSTEM if VERIFIED_SCENE_GATE else OBSERVE_SYSTEM
+                )
+                return model, _parse_list(await _call(
+                    client,
+                    model,
+                    observer_system,
+                    content,
+                    4000,
+                    timeout_s=OBSERVER_TIMEOUT_S,
+                ))
             except Exception as e:  # noqa: BLE001
                 log.warning("observer %s failed: %s", model, e)
                 return model, []
@@ -248,8 +360,18 @@ async def caption_ensemble_frames(
                 {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
             ]
             try:
+                observer_system = (
+                    VERIFIED_OBSERVER_SYSTEM if VERIFIED_SCENE_GATE else OBSERVE_SYSTEM
+                )
                 return f"{model} (video)", _parse_list(
-                    await _call(client, model, OBSERVE_SYSTEM, vid_content, 4000))
+                    await _call(
+                        client,
+                        model,
+                        observer_system,
+                        vid_content,
+                        4000,
+                        timeout_s=OBSERVER_TIMEOUT_S,
+                    ))
             except Exception as e:  # noqa: BLE001
                 log.warning("video observer %s failed: %s", model, e)
                 return model, []
@@ -264,6 +386,34 @@ async def caption_ensemble_frames(
         ]
         if not blocks:
             raise RuntimeError("all ensemble observers failed")
+        if VERIFIED_SCENE_GATE:
+            async def gate_call(**request) -> str:
+                return await _call(
+                    client,
+                    request["model"],
+                    request["system"],
+                    request["content"],
+                    request["max_tokens"],
+                    temperature=request["temperature"],
+                    timeout_s=request["timeout_s"],
+                )
+
+            try:
+                return await generate_verified_captions(
+                    observations=[(model, details) for model, details in obs if details],
+                    vision_content=content,
+                    styles=styles,
+                    call_model=gate_call,
+                    verifier_model=VERIFIER_MODEL,
+                    writer_model=VERIFIED_WRITER_MODEL,
+                    auditor_model=AUDITOR_MODEL,
+                    repair_model=REPAIR_MODEL,
+                )
+            except Exception as e:  # noqa: BLE001 - preserve the v19/v29 floor
+                log.warning(
+                    "verified scene gate failed (%s); using legacy ensemble writer",
+                    e,
+                )
         write_content = (
             "Independent observation lists from several vision models for ONE clip. "
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
@@ -280,8 +430,15 @@ async def caption_ensemble_frames(
             raw = ""
             for attempt in range(2):
                 try:
-                    raw = await _call(client, WRITER, system, write_content, 3000,
-                                      temperature=WRITER_TEMP, timeout_s=60.0)
+                    raw = await _call(
+                        client,
+                        WRITER,
+                        system,
+                        write_content,
+                        3000,
+                        temperature=WRITER_TEMP,
+                        timeout_s=LEGACY_WRITER_TIMEOUT_S,
+                    )
                     break
                 except (httpx.HTTPStatusError, httpx.TransportError) as e:
                     if attempt == 1:
@@ -374,10 +531,12 @@ async def caption_ensemble(video_url: str, styles: list[str]) -> dict[str, str]:
     with tempfile.TemporaryDirectory() as tmp:
         wd = Path(tmp)
         vp = await P._download(video_url, wd / "clip.mp4")
-        frames = P._extract_keyframes(vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE)
+        frames = await asyncio.to_thread(
+            P._extract_keyframes, vp, wd, P.NUM_FRAMES, P.FRAME_MAX_EDGE
+        )
         # Same formula as _extract_uniform_frames (scene-detect is disabled in
         # the submission profile, so indexes line up 1:1 with the frames).
-        duration = P._ffprobe_duration(vp)
+        duration = await asyncio.to_thread(P._ffprobe_duration, vp)
         if duration <= 0:
             duration = 60.0
         n = len(frames)

@@ -1,133 +1,60 @@
-# Track 2 Captioner - AMD Developer Hackathon ACT II
+# AMD Track 2 - Verified Scene Gate
 
-Dockerized video-captioning agent for Track 2. It reads `/input/tasks.json`,
-generates four styled English captions per clip, and writes
-`/output/results.json`.
+Dockerized video-captioning agent. It reads `/input/tasks.json`, generates all
+four requested English styles, writes `/output/results.json`, and exits.
 
-## Run it in 60 seconds (judges start here)
+## Run the public image
 
 ```bash
 docker pull ghcr.io/theskygold/track2-captioner:latest
 docker run --rm \
-  -v /path/to/input:/input \
+  -v /path/to/input:/input:ro \
   -v /path/to/output:/output \
   ghcr.io/theskygold/track2-captioner:latest
 ```
 
-Public image, linux/amd64, 0.25 GB compressed, keys baked at build time —
-nothing to configure. `/input/tasks.json` in, `/output/results.json` out,
-all four styles always present and validated.
+Required styles: `formal`, `sarcastic`, `humorous_tech`, and
+`humorous_non_tech`.
 
-## Caption YOUR own video (beyond the sample clips)
+## v30 architecture
 
-```bash
-pip install -r requirements.txt
-python -m app.webapp        # -> http://127.0.0.1:8799
-```
+The submission profile is `CAPTION_ENGINE=ensemble` with
+`VERIFIED_SCENE_GATE=1`.
 
-Paste any direct `.mp4` URL or upload a local file; get the four styled
-captions in about a minute. Uses the full ensemble when API credits are
-available and degrades automatically to the free-tier pipeline when they are
-not — verified end-to-end on out-of-sample videos (`eval/BENCHMARK_LOG.md`
-includes 12 Pexels stress clips beyond the official set).
+1. FFmpeg samples eight chronological frames and provides timestamp labels
+   beside, never over, the pixels.
+2. GPT-5.5 and Gemini 3.1 Pro independently list 2-12 high-confidence atomic
+   observations.
+3. Local code assigns immutable fact IDs. GPT-5.5 re-reads the frames and may
+   keep existing IDs only; it cannot rewrite or create a fact.
+4. Risky colors, counts, directions, OCR, brands, and breeds require
+   independent corroboration on the same subject.
+5. Four style-specific Opus 4.8 writers run in parallel from verified facts.
+6. GPT-5.5 audits literal accuracy, central subject/action coverage, temporal
+   consistency, and the official style rubric. Only failed styles are repaired
+   and re-audited.
+7. Local guards enforce all four keys, English output, style separation, safe
+   appearance handling, prompt-text isolation, and a 420-character ceiling.
 
-## Architecture
+Once at least two facts are verified, a late provider failure cannot return to
+the older combined writer. A per-style deterministic fallback uses the closed
+fact ledger only.
 
-**Submission engine = a vision-model ENSEMBLE** (`CAPTION_ENGINE=ensemble`).
+## Evidence
 
-1. Download each MP4 and extract keyframes (scene-change + uniform sampling).
-2. **Three frontier vision models observe the frames independently** — GPT-5.5,
-   Gemini 3.1 Pro, Claude Opus 4.5 — each returning an exhaustive detail list.
-3. A **writer (Opus 4.5) cross-references all three lists**: a detail 2+ models
-   agree on is trusted; a lone specific claim is dropped unless corroborated.
-4. It writes the four required styles: `formal`, `sarcastic`, `humorous_tech`,
-   `humorous_non_tech`. Normalized + Pydantic-validated before output.
+- Targeted v30 suite: 40 unit/integration tests.
+- Public examples: 3/3 completed through the verified path in 63.2 seconds in
+  the final Docker run; all three local output audits passed.
+- Broader local set: 12/12 rows, 48/48 captions, 245.6 seconds, structural
+  self-check passed.
 
-Detection comes from the *union* of what the models see; precision from their
-*agreement*. Measured on the 15 official AMD sample clips via an adversarial
-vision audit: **0.942 accuracy, ~14.8 verified details/caption**, ~3× a single
-model — see `eval/BENCHMARK_LOG.md`.
+These are runtime and generalization checks, not an official score. The guide
+contains three public development clips; the announced evaluation uses a
+hidden set of about twelve clips.
 
-A single-model fallback (`CAPTION_ENGINE=pipeline`: Qwen3-VL-235B describe →
-writer) is available for lower-cost runs. The runtime degrades gracefully:
-provider failover, non-empty styled fallbacks, never malformed output.
+## I/O contract
 
-**Dossier:** `SUBMISSION.md`, `docs/video_script.md`, `docs/slides.html`,
-`docs/comparison.html` (models side by side), `docs/official.html` (captions on
-the jury clips). Test any video: `python -m app.webapp` → upload or paste a URL.
-
-## Quickstart
-
-Offline preflight, no API keys required:
-
-```bash
-python scripts/preflight.py
-```
-
-Build and run the Docker contract check:
-
-```bash
-python scripts/preflight.py --docker-build --docker-run
-```
-
-Real inference run:
-
-```bash
-export FIREWORKS_API_KEY=fw_xxx
-python scripts/preflight.py --strict --docker-build --docker-run
-make submit-check
-```
-
-Low-rate live run with Groq/OpenRouter first and Fireworks as fallback:
-
-```bash
-PROVIDER_ORDER=groq,fireworks,openrouter \
-DESCRIBE_PROVIDER_ORDER=groq,openrouter,fireworks \
-STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
-MAX_CONCURRENCY=1 \
-NUM_FRAMES=5 \
-FRAME_MAX_EDGE=512 \
-INPUT_PATH=data/sample_tasks.json \
-OUTPUT_PATH=out/groq_results_final.json \
-python -m app.main
-
-python eval/self_check.py --results out/groq_results_final.json
-python eval/quality_audit.py --results out/groq_results_final.json
-python scripts/quality_gate.py --results out/demo_quality_results.json --scores eval/scores_quality_openrouter.json
-```
-
-Best measured quality profile on the public sample:
-
-```bash
-PROVIDER_ORDER=openrouter,groq,fireworks \
-DESCRIBE_PROVIDER_ORDER=openrouter,groq,fireworks \
-STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
-MAX_CONCURRENCY=1 \
-NUM_FRAMES=8 \
-FRAME_MAX_EDGE=640 \
-DESCRIBE_MAX_TOKENS=900 \
-STYLE_MAX_TOKENS=180 \
-INPUT_PATH=data/sample_tasks.json \
-OUTPUT_PATH=out/demo_quality_results.json \
-python -m app.main
-```
-
-The describe prompt asks for conservative fine-grained observations: approximate
-traffic quantities, animal type without breed guesses, leaf/sunlight detail,
-jewelry, hand position, nail color, cables, peripherals, and nearby objects.
-Uncertain details are kept out of final captions unless they are visually clear.
-
-Publish and verify a public image:
-
-```bash
-export PUBLIC_IMAGE=ghcr.io/<user>/track2-captioner:final
-make publish
-make verify-public
-```
-
-## I/O Contract
-
-Input: `/input/tasks.json`
+Input, `/input/tasks.json`:
 
 ```json
 [
@@ -139,7 +66,7 @@ Input: `/input/tasks.json`
 ]
 ```
 
-Output: `/output/results.json`
+Output, `/output/results.json`:
 
 ```json
 [
@@ -155,81 +82,44 @@ Output: `/output/results.json`
 ]
 ```
 
-## Runtime Variables
-
-Copy `.env.example` to `.env` for local development. Do not commit real keys.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `FIREWORKS_API_KEY` | empty | Required for real VLM/style inference. |
-| `FIREWORKS_BASE_URL` | `https://api.fireworks.ai/inference/v1` | OpenAI-compatible Fireworks endpoint. |
-| `PROVIDER_ORDER` | `groq,fireworks,openrouter` | Default provider priority. |
-| `DESCRIBE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for video understanding. |
-| `STYLE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for style caption writing. |
-| `VLM_MODEL` | `accounts/fireworks/models/qwen2p5-vl-7b-instruct` | Describe-stage VLM. |
-| `VLM_FALLBACK_MODELS` | empty | Comma-separated describe-stage fallback models. |
-| `DIRECT_VIDEO_MODEL` | empty | Optional dedicated Fireworks video/audio model deployment. |
-| `DIRECT_VIDEO_MAX_SECONDS` | `60` | Max seconds sent to the direct video/audio path. |
-| `GROQ_VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq vision fallback/priority model. |
-| `OPENROUTER_API_KEY` | empty | Enables OpenRouter fallback. |
-| `OPENROUTER_VLM_MODEL` | `qwen/qwen3-vl-8b-instruct` | OpenRouter describe-stage model. |
-| `DESCRIBE_MAX_TOKENS` | `700` | Token budget for rich scene-facts JSON. |
-| `STYLE_MODEL` | `accounts/fireworks/models/gemma-3-27b-it` | Style rewriter, Gemma bonus path. |
-| `STYLE_LORA` | empty | Optional deployed LoRA model id. |
-| `STYLE_FALLBACK_MODELS` | empty | Comma-separated style fallback models. |
-| `GROQ_STYLE_MODEL` | `llama-3.3-70b-versatile` | Groq style model. |
-| `OPENROUTER_STYLE_MODEL` | `qwen/qwen3-vl-8b-instruct` | OpenRouter style fallback. |
-| `STYLE_MAX_TOKENS` | `140` | Token budget for one styled caption. |
-| `EVIDENCE_LOCK_ENABLED` | `0` | Enables experimental candidate/repair pass against visual evidence. |
-| `STYLE_CANDIDATES` | `2` | Candidate count when evidence-lock mode is enabled. |
-| `STYLE_REPAIR_ENABLED` | `1` | Enables model/deterministic repair for thin evidence-lock captions. |
-| `JUDGE_PROVIDER_ORDER` | `fireworks,openrouter,groq` | Provider priority for local LLM-judge proxy. |
-| `FIREWORKS_JUDGE_MODEL` | `accounts/fireworks/models/qwen3p7-plus` | Fireworks judge model when available. |
-| `GROQ_JUDGE_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq judge fallback. |
-| `OPENROUTER_JUDGE_MODEL` | `qwen/qwen3-vl-8b-instruct` | OpenRouter judge fallback. |
-| `GROQ_API_KEY` | empty | Enables optional Whisper transcription. |
-| `NUM_FRAMES` | `8` | Target number of keyframes. |
-| `FRAME_MAX_EDGE` | `720` | Max frame edge before upload. |
-| `SCENE_DETECT_ENABLED` | `1` | Enable scene-change sampling before uniform fill. |
-| `MAX_CONCURRENCY` | `3` | Parallel clips. |
-| `PER_TASK_TIMEOUT_S` | `25` | Per-clip hard timeout. |
-
-## Validation
-
-Local gates:
+## Validate locally
 
 ```bash
+python scripts/preflight.py
+PYTHONPATH=. python scripts/test_verified_scene_gate.py
 python scripts/contract_test.py
-python scripts/mock_run.py --tasks data/sample_tasks.json --out out/mock_results.json
-python eval/self_check.py --results out/mock_results.json
-python eval/quality_audit.py --results out/mock_results.json
-python eval/detail_audit.py --results out/demo_quality_results.json
-python finetune/train_gemma_lora.py --dataset finetune/dataset_v2.jsonl --dry-run
 ```
 
-Current status and remaining submission gates are tracked in `SUBMIT_STATUS.md`.
-Prompt/skill/plugin research is tracked in `docs/quality-research.md`.
+Build and run the mounted-I/O contract test:
 
-Interactive project briefing:
-
-```text
-docs/mission-control.html
+```bash
+export OPENROUTER_API_KEY=...
+python scripts/preflight.py --strict --docker-build --docker-run
 ```
 
-## Repository Layout
+## Submission profile
 
-- `app/` - container runtime.
-- `data/` - sample tasks.
-- `docs/` - interactive briefing and project poster.
-- `eval/` - zero-cost audits and provider-agnostic local judge.
-- `finetune/` - synthetic dataset, scene generator, LoRA training/deploy notes.
-- `scripts/` - preflight, Docker build/run/publish helpers.
-- `SUBMISSION.md` - lablab.ai submission copy.
-- `RUNBOOK.md` - operational commands.
+| Variable | Docker value |
+|---|---|
+| `CAPTION_ENGINE` | `ensemble` |
+| `VERIFIED_SCENE_GATE` | `1` |
+| `ENSEMBLE_OBSERVERS` | `openai/gpt-5.5,google/gemini-3.1-pro-preview` |
+| `VERIFIED_SCENE_MODEL` | `openai/gpt-5.5` |
+| `VERIFIED_WRITER_MODEL` | `anthropic/claude-opus-4.8` |
+| `VERIFIED_REPAIR_MODEL` | `anthropic/claude-opus-4.8` |
+| `VERIFIED_AUDITOR_MODEL` | `openai/gpt-5.5` |
+| Last-resort observer / writer | `openai/gpt-5.5` / `anthropic/claude-opus-4.8` |
+| Provider order | `openrouter` only |
+| `NUM_FRAMES` / `FRAME_MAX_EDGE` | `8` / `768` |
+| `MAX_CONCURRENCY` / API in-flight | `3` / `6` |
+| Per-task / global deadline | `125s` / `535s` |
+| Caption ceiling | `420` characters |
 
-## Notes
+The repository is key-free. The competition harness injects no environment
+variables, so a judging image must use a dedicated, capped, expiring and
+revocable OpenRouter key at build time. Groq and Fireworks credentials are not
+included in the submission image. Never publish a personal unrestricted
+credential; rotate the competition credential after judging.
 
-- Build target is `linux/amd64`.
-- The image does not bake credentials.
-- Generated `out/`, `in/`, caches, zips, and flattened duplicate exports are
-  ignored by git.
+See [SUBMISSION.md](SUBMISSION.md), [RUNBOOK.md](RUNBOOK.md), and
+[SUBMIT_STATUS.md](SUBMIT_STATUS.md).

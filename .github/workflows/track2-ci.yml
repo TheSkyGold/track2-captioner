@@ -22,6 +22,10 @@ jobs:
         run: python scripts/test_style_filter.py
         env:
           PYTHONPATH: .
+      - name: Verified Scene Gate
+        run: python scripts/test_verified_scene_gate.py
+        env:
+          PYTHONPATH: .
 
   docker-build:
     runs-on: ubuntu-latest
@@ -31,4 +35,13 @@ jobs:
       - name: Build linux/amd64 image
         run: docker buildx build --platform linux/amd64 --tag track2-captioner:ci --load .
       - name: Inspect image
-        run: docker inspect track2-captioner:ci --format 'architecture={{.Architecture}} os={{.Os}} size={{.Size}}'
+        run: |
+          docker inspect track2-captioner:ci --format 'architecture={{.Architecture}} os={{.Os}} size={{.Size}}'
+          test "$(docker inspect track2-captioner:ci --format '{{.Architecture}}')" = "amd64"
+          test "$(docker inspect track2-captioner:ci --format '{{.Os}}')" = "linux"
+          test "$(docker inspect track2-captioner:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VERIFIED_SCENE_GATE=' | cut -d= -f2)" = "1"
+          test "$(docker inspect track2-captioner:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^PROVIDER_ORDER=' | cut -d= -f2)" = "openrouter"
+          test "$(docker inspect track2-captioner:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^STYLE_PROVIDER_ORDER=' | cut -d= -f2)" = "openrouter"
+          ! docker inspect track2-captioner:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^GROQ_API_KEY='
+          ! docker inspect track2-captioner:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^FIREWORKS_API_KEY='
+          test "$(docker inspect track2-captioner:ci --format '{{.Size}}')" -lt 10000000000

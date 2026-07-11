@@ -9,7 +9,7 @@ Format: screen recording + voiceover. Unlisted YouTube is fine. Keep it tight.
 **VO:** "Every short video needs captions — for accessibility, for marketing, for reach. Track 2 asks for four *very different* tones of the same clip, and it scores you on two things at once: are you *accurate*, and does the *tone* land. Those pull against each other. Here's how we win both."
 
 ## 0:20–0:50 — The core idea: an ensemble that sees more, and lies less
-**Visual:** animated diagram — one clip → keyframes → three model boxes (GPT‑5.5, Gemini 3.1 Pro, Claude Opus 4.5) each emitting a list of details → a "writer" box merging them → four styled captions.
+**Visual:** animated diagram — one clip → keyframes → two observer boxes (GPT‑5.5 and Gemini 3.1 Pro), a GPT‑5.5 verification gate, then four Claude Opus 4.8 style writers.
 **VO:** "Instead of one model, three frontier vision models watch the frames independently and each lists everything they see. A writer then cross‑references them: a detail two models agree on is trusted; a lone, unverifiable guess is dropped. Detection comes from the *union* of what they see. Precision comes from their *agreement*."
 
 ## 0:50–1:20 — Proof, on the judge's own clips
