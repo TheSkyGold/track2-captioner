@@ -30,12 +30,12 @@ COPY app/ ./app/
 
 # The harness mounts /input and /output at runtime and injects NO env vars,
 # so the submission profile is pinned here. Non-secret config is plain ENV.
-# Submission engine = ENSEMBLE (measured best on the official jury distribution:
-# 0.942 accuracy, ~14.8 correct details/caption, lowest contradictions). Three
-# frontier vision models observe the frames; Claude Opus 4.5 cross-references and
-# writes. To fall back to the single-model pipeline, set CAPTION_ENGINE=pipeline.
+# Submission engine = PIPELINE. The 12-clip stress benchmark measured the
+# Qwen3-VL-8B + Gemma style profile as the strongest reliable path
+# (scores_stress_gemma_v6.json: final 0.969). The ensemble path depends on
+# frontier models and is kept as an opt-in experiment, not the default image.
 ENV PYTHONPATH=/app \
-    CAPTION_ENGINE=ensemble \
+    CAPTION_ENGINE=pipeline \
     ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.5 \
     ENSEMBLE_WRITER=anthropic/claude-opus-4.5 \
     CANDIDATE_SETS=1 \
@@ -47,23 +47,24 @@ ENV PYTHONPATH=/app \
     TIMESTAMP_TEXT=0 \
     FRAME_ANCHOR=1 \
     MAX_CAPTION_CHARS=1600 \
-    OPENROUTER_VLM_MODEL=qwen/qwen3-vl-235b-a22b-instruct \
-    OPENROUTER_STYLE_MODEL=google/gemma-4-31b-it \
+    OPENROUTER_VLM_MODEL=qwen/qwen3-vl-8b-instruct \
+    OPENROUTER_STYLE_MODEL=google/gemma-3-27b-it \
     PROVIDER_ORDER=openrouter,groq,fireworks \
-    STYLE_PROVIDER_ORDER=openrouter,fireworks,groq \
+    DESCRIBE_PROVIDER_ORDER=openrouter,groq,fireworks \
+    STYLE_PROVIDER_ORDER=openrouter,groq,fireworks \
     STYLE_MODEL=accounts/fireworks/models/gpt-oss-120b \
     STYLE_REASONING_EFFORT=low \
     STYLE_MAX_TOKENS=1400 \
     DETERMINISTIC_FORMAL=1 \
-    NUM_FRAMES=10 \
-    FRAME_MAX_EDGE=896 \
+    NUM_FRAMES=8 \
+    FRAME_MAX_EDGE=720 \
     GROQ_MAX_IMAGES=4 \
     GROQ_FRAME_MAX_EDGE=448 \
     HTTP_429_RETRIES=5 \
     HTTP_429_MAX_WAIT_S=45 \
     RETRY_AFTER_GIVEUP_S=60 \
-    DESCRIBE_MAX_TOKENS=1300 \
-    SCENE_DETECT_ENABLED=0 \
+    DESCRIBE_MAX_TOKENS=900 \
+    SCENE_DETECT_ENABLED=1 \
     MAX_CONCURRENCY=2 \
     PER_TASK_TIMEOUT_S=150 \
     GLOBAL_BUDGET_S=540

@@ -14,9 +14,11 @@ docker run --rm \
   ghcr.io/theskygold/track2-captioner:latest
 ```
 
-Public image, linux/amd64, 0.25 GB compressed, keys baked at build time —
-nothing to configure. `/input/tasks.json` in, `/output/results.json` out,
-all four styles always present and validated.
+Public image, linux/amd64, small enough for the judge. `/input/tasks.json` in,
+`/output/results.json` out, all four styles always present and validated. If
+the judge does not inject provider env vars, a full-quality public image must be
+built from CI secrets; that makes those keys part of the published image and
+they should be rotated after judging.
 
 ## Caption YOUR own video (beyond the sample clips)
 
@@ -26,14 +28,20 @@ python -m app.webapp        # -> http://127.0.0.1:8799
 ```
 
 Paste any direct `.mp4` URL or upload a local file; get the four styled
-captions in about a minute. Uses the full ensemble when API credits are
-available and degrades automatically to the free-tier pipeline when they are
-not — verified end-to-end on out-of-sample videos (`eval/BENCHMARK_LOG.md`
-includes 12 Pexels stress clips beyond the official set).
+captions in about a minute. The default submission profile uses the measured
+two-stage pipeline; the premium ensemble remains available for experiments.
+Validation includes out-of-sample videos (`eval/BENCHMARK_LOG.md` includes 12
+Pexels stress clips beyond the official set).
 
 ## Architecture
 
-**Submission engine = a vision-model ENSEMBLE** (`CAPTION_ENGINE=ensemble`).
+Current submission default: `CAPTION_ENGINE=pipeline`, using Qwen3-VL-8B for
+scene understanding and Gemma-3-27B for styled captions. This is the best
+reliable measured profile on the 12-clip stress benchmark
+(`scores_stress_gemma_v6.json`: final `0.969`). The ensemble path remains in
+the repo as an opt-in experiment, not the default Docker submission path.
+
+**Optional premium engine = a vision-model ensemble** (`CAPTION_ENGINE=ensemble`).
 
 1. Download each MP4 and extract keyframes (scene-change + uniform sampling).
 2. **Three frontier vision models observe the frames independently** — GPT-5.5,
@@ -48,9 +56,8 @@ Detection comes from the *union* of what the models see; precision from their
 vision audit: **0.942 accuracy, ~14.8 verified details/caption**, ~3× a single
 model — see `eval/BENCHMARK_LOG.md`.
 
-A single-model fallback (`CAPTION_ENGINE=pipeline`: Qwen3-VL-235B describe →
-writer) is available for lower-cost runs. The runtime degrades gracefully:
-provider failover, non-empty styled fallbacks, never malformed output.
+The runtime degrades gracefully: provider failover, non-empty styled fallbacks,
+never malformed output.
 
 **Dossier:** `SUBMISSION.md`, `docs/video_script.md`, `docs/slides.html`,
 `docs/comparison.html` (models side by side), `docs/official.html` (captions on
@@ -230,6 +237,7 @@ docs/mission-control.html
 ## Notes
 
 - Build target is `linux/amd64`.
-- The image does not bake credentials.
+- The default local image does not bake credentials. The GHCR submission
+  workflow can bake CI secrets only when the judge cannot inject env vars.
 - Generated `out/`, `in/`, caches, zips, and flattened duplicate exports are
   ignored by git.

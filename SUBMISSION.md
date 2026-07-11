@@ -6,9 +6,26 @@ Everything you need to fill in on the lablab.ai submission form.
 **Track2 Captioner — a two-stage video-caption agent tuned for style-match**
 
 ## Short Description (≤ 200 chars)
-> A vision-model ENSEMBLE for video captioning: three frontier VLMs independently observe the frames, cross-verify, and one writer fuses them into four richly-detailed styled captions. 0.94 accuracy on the official clips.
+> A grounded two-stage video captioner: Qwen3-VL extracts dense visual facts, Gemma-3-27B writes four styled captions, with strict JSON, fallbacks, and stress-bench validation.
 
-## Architecture (ensemble)
+## Current Submission Default
+
+The Docker image currently defaults to the measured two-stage pipeline
+(`CAPTION_ENGINE=pipeline`): Qwen3-VL-8B for grounded scene facts and
+Gemma-3-27B for the four style rewrites. This profile is the best reliable
+stress benchmark run so far (`scores_stress_gemma_v6.json`: final `0.969`).
+The ensemble engine is retained as an opt-in premium path, not the default
+submission engine.
+
+## Architecture
+
+The default Docker profile samples each clip into representative frames,
+extracts grounded visual facts with Qwen3-VL-8B, then rewrites those facts into
+the four required styles with Gemma-3-27B. Formal captions use deterministic
+fact rendering where that improves grounding, while creative styles keep the
+style model's voice under strict visual constraints.
+
+## Optional premium ensemble
 Each clip is sampled to keyframes, then **three frontier vision models observe
 independently** — GPT-5.5, Gemini 3.1 Pro, and Claude Opus 4.5 — each returning
 an exhaustive list of concrete visual details. A **writer (Opus 4.5)
@@ -21,8 +38,8 @@ audit: **0.942 caption accuracy, ~14.8 verified visual details per caption, near
 contradictions**, ~3x the detail of any single model — and it recovers text no
 single model reads correctly (e.g. a street sign) through model agreement.
 
-A single-model fallback engine (Qwen3-VL-235B describe -> writer) ships behind
-`CAPTION_ENGINE=pipeline` for lower-cost runs.
+The ensemble remains behind `CAPTION_ENGINE=ensemble` for premium experiments,
+but it is not the default submission path.
 
 ## Long Description
 
@@ -56,7 +73,7 @@ AI Agent, Video, Multimodal, Developer Tools
 
 ## What we chose NOT to do (and why)
 - **We do not overfit the three example clips** — the guide explicitly warns that "agents that only work on the three example clips will score poorly". Our few-shots span unrelated domains, validation runs on 12 held-out stress clips, and we eradicated every hardcoded-fallback leak (whole-word matching + fallback scanner).
-- **We do not commit credentials** — the repo is key-free; keys are injected as build args at publish time only (the judging harness injects no env vars).
+- **We do not commit credentials** — the repo is key-free. If the judging harness injects no env vars, the public image must be built from CI secrets and those keys must be rotated after judging.
 - **We do not put skin color or animal eye color in captions** — hallucinated appearance details cost accuracy and safety points; they stay in `uncertain_details`.
 
 ## Reproduction (5 minutes)
