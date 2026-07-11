@@ -1398,6 +1398,40 @@ class BlockingWorkTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(payment_error.calls, 1)
 
+    async def test_openrouter_retries_a_transient_transport_error(self) -> None:
+        class FakeResponse:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self):
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            async def post(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    request = httpx.Request("POST", "https://openrouter.test")
+                    raise httpx.ConnectError("temporary connection failure", request=request)
+                return FakeResponse()
+
+        client = FakeClient()
+        with (
+            patch.object(ensemble_module, "HTTP_RETRIES", 1, create=True),
+            patch.object(ensemble_module, "RETRY_MAX_WAIT_S", 0, create=True),
+        ):
+            result = await ensemble_module._call(
+                client, "model", "system", "content", 10, timeout_s=1
+            )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(client.calls, 2)
+
     async def test_openrouter_calls_respect_process_wide_inflight_limit(self) -> None:
         active = 0
         peak = 0

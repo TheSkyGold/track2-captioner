@@ -251,7 +251,28 @@ async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any
         remaining = deadline - loop.time() if deadline is not None else None
         if remaining is not None and remaining <= 0:
             raise asyncio.TimeoutError(f"{model} exceeded its {timeout_s}s stage budget")
-        r = await post_once()
+        try:
+            r = await post_once()
+        except httpx.TransportError as exc:
+            if attempt >= HTTP_RETRIES:
+                raise
+            wait_s = min(0.25, RETRY_MAX_WAIT_S)
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError(
+                        f"{model} exceeded its {timeout_s}s stage budget"
+                    ) from exc
+                wait_s = min(wait_s, remaining)
+            log.warning(
+                "%s hit a transient transport error; retrying once in %.2fs: %s",
+                model,
+                wait_s,
+                exc,
+            )
+            if wait_s:
+                await asyncio.sleep(wait_s)
+            continue
         transient = r.status_code == 429 or 500 <= r.status_code < 600
         if transient and attempt < HTTP_RETRIES:
             try:
