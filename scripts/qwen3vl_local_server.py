@@ -64,6 +64,12 @@ def generation_options(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def chat_template_options() -> dict[str, bool]:
+    """Disable Qwen3 reasoning by default for bounded captioning latency."""
+    enabled = os.environ.get("LOCAL_ENABLE_THINKING", "0") != "0"
+    return {"enable_thinking": enabled}
+
+
 def openai_response(content: str, model: str) -> dict[str, Any]:
     return {
         "id": f"chatcmpl-local-{uuid.uuid4().hex}",
@@ -115,6 +121,7 @@ class QwenRuntime:
                 add_generation_prompt=True,
                 return_dict=True,
                 return_tensors="pt",
+                **chat_template_options(),
             )
             inputs = inputs.to(self.model.device)
             generated = self.model.generate(**inputs, **generation_options(payload))

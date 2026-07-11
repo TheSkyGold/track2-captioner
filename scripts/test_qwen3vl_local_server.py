@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 
@@ -53,6 +54,18 @@ def main() -> None:
     assert sampled["do_sample"] is True
     assert sampled["temperature"] == 0.6
     assert sampled["top_p"] == 0.8
+
+    old_thinking = os.environ.get("LOCAL_ENABLE_THINKING")
+    try:
+        os.environ.pop("LOCAL_ENABLE_THINKING", None)
+        assert module.chat_template_options() == {"enable_thinking": False}
+        os.environ["LOCAL_ENABLE_THINKING"] = "1"
+        assert module.chat_template_options() == {"enable_thinking": True}
+    finally:
+        if old_thinking is None:
+            os.environ.pop("LOCAL_ENABLE_THINKING", None)
+        else:
+            os.environ["LOCAL_ENABLE_THINKING"] = old_thinking
 
     response = module.openai_response("{\"ok\":true}", "local-model")
     assert response["model"] == "local-model"
