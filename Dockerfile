@@ -30,14 +30,14 @@ COPY app/ ./app/
 
 # The harness mounts /input and /output at runtime and injects NO env vars,
 # so the submission profile is pinned here. Non-secret config is plain ENV.
-# Submission engine = v30 Verified Scene Gate. Two independent vision observers
+# Submission engine = v30 Verified Scene Gate. Three independent vision observers
 # build candidate facts; GPT-5.5 verifies a closed registry against the pixels;
 # four style-specific Opus writers run in parallel; GPT-5.5 audits and triggers
 # selective repair. The legacy ensemble remains only an early-failure fallback.
 ENV PYTHONPATH=/app \
     CAPTION_ENGINE=ensemble \
     VERIFIED_SCENE_GATE=1 \
-    ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview \
+    ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,anthropic/claude-opus-4.8 \
     VERIFIED_SCENE_MODEL=openai/gpt-5.5 \
     VERIFIED_WRITER_MODEL=anthropic/claude-opus-4.8 \
     VERIFIED_REPAIR_MODEL=anthropic/claude-opus-4.8 \
@@ -57,7 +57,7 @@ ENV PYTHONPATH=/app \
     TIMESTAMP_FRAMES=0 \
     TIMESTAMP_TEXT=1 \
     FRAME_ANCHOR=1 \
-    MAX_CAPTION_CHARS=420 \
+    MAX_CAPTION_CHARS=300 \
     OPENROUTER_VLM_MODEL=openai/gpt-5.5 \
     OPENROUTER_STYLE_MODEL=anthropic/claude-opus-4.8 \
     PROVIDER_ORDER=openrouter \

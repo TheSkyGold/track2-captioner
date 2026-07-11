@@ -476,13 +476,24 @@ class LengthValidationTests(unittest.TestCase):
 
     def test_character_cap_is_independent_from_word_count(self) -> None:
         assert caption_quality_issues is not None
-        long_tokens = " ".join("extraordinary" for _ in range(38))
+        long_tokens = " ".join("abcdefgh" for _ in range(38))
 
         issues = caption_quality_issues("formal", long_tokens)
 
         self.assertNotIn("too_few_words", issues)
         self.assertNotIn("too_many_words", issues)
         self.assertIn("too_many_chars", issues)
+
+    def test_submission_profile_uses_three_observers_and_300_char_cap(self) -> None:
+        dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "ENSEMBLE_OBSERVERS=openai/gpt-5.5,google/gemini-3.1-pro-preview,"
+            "anthropic/claude-opus-4.8",
+            dockerfile,
+        )
+        self.assertIn("MAX_CAPTION_CHARS=300", dockerfile)
 
     def test_sentence_joining_dashes_are_normalized_without_breaking_compounds(self) -> None:
         self.assertIsNotNone(clean_model_caption)

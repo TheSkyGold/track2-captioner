@@ -18,7 +18,7 @@ log = logging.getLogger("track2.verified_scene")
 
 MAX_VERIFIED_FACTS = 12
 MAX_CANDIDATE_FACTS = 64
-MAX_VERIFIED_CAPTION_CHARS = 420
+MAX_VERIFIED_CAPTION_CHARS = 300
 _EYE_COLOR = re.compile(
     r"\b(?:blue|green|brown|hazel|grey|gray|amber|black)\s+eyes?\b"
     r"|\beye\s+colou?r\b",
