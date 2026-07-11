@@ -100,7 +100,7 @@ def _inspect_submission_profile(image: str) -> bool:
         "OPENROUTER_STYLE_MODEL": "anthropic/claude-opus-4.8",
         "PROVIDER_ORDER": "openrouter",
         "STYLE_PROVIDER_ORDER": "openrouter",
-        "MAX_CAPTION_CHARS": "420",
+        "MAX_CAPTION_CHARS": "300",
         "NUM_FRAMES": "8",
         "FRAME_MAX_EDGE": "768",
         "MAX_CONCURRENCY": "3",

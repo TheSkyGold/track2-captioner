@@ -34,7 +34,7 @@ The submission profile is `CAPTION_ENGINE=ensemble` with
    consistency, and the official style rubric. Only failed styles are repaired
    and re-audited.
 7. Local guards enforce all four keys, English output, style separation, safe
-   appearance handling, prompt-text isolation, and a 420-character ceiling.
+   appearance handling, prompt-text isolation, and a 300-character ceiling.
 
 Once at least two facts are verified, a late provider failure cannot return to
 the older combined writer. A per-style deterministic fallback uses the closed
@@ -113,7 +113,7 @@ python scripts/preflight.py --strict --docker-build --docker-run
 | `NUM_FRAMES` / `FRAME_MAX_EDGE` | `8` / `768` |
 | `MAX_CONCURRENCY` / API in-flight | `3` / `6` |
 | Per-task / global deadline | `125s` / `535s` |
-| Caption ceiling | `420` characters |
+| Caption ceiling | `300` characters |
 
 The repository is key-free. The competition harness injects no environment
 variables, so a judging image must use a dedicated, capped, expiring and

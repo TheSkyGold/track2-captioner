@@ -196,7 +196,7 @@ python scripts/test_style_filter.py
 python scripts/test_verified_scene_gate.py
 ```
 
-Expected: contract and style checks pass; all 42 scene-gate tests pass.
+Expected: contract and style checks pass; all 43 scene-gate tests pass.
 
 - [ ] **Step 2: Run syntax and diff checks**
 

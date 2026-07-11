@@ -5,7 +5,7 @@ bans WITHOUT calling any judge. Runs in ~50 ms. Use this as a pre-submit gate.
 Checks:
     ✓ list of objects with task_id + captions
     ✓ all 4 required styles present per row
-    ✓ every caption is a non-empty string ≤ 420 chars
+    ✓ every caption is a non-empty string ≤ 300 chars
     ✓ english-looking (ASCII/latin-1)
     ✓ style bans not violated:
         - formal: no ! ? emoji, no first/second person
@@ -82,7 +82,7 @@ def check_row(row: dict, errs: list[str]) -> None:
         if not isinstance(cap, str) or not cap.strip():
             _fail(errs, f"[{tid}/{style}] caption empty or not a string")
             continue
-        max_chars = int(os.environ.get("MAX_CAPTION_CHARS", "420"))
+        max_chars = int(os.environ.get("MAX_CAPTION_CHARS", "300"))
         if len(cap) > max_chars:
             _fail(errs, f"[{tid}/{style}] caption too long ({len(cap)} > {max_chars} chars)")
         if not _looks_english(cap):

@@ -89,7 +89,7 @@ def main() -> None:
     assert _provider_order("style")
     assert set(STYLE_LIMITS) == set(REQUIRED_STYLES)
     assert set(HARD_MIN_WORDS) == set(REQUIRED_STYLES)
-    assert MAX_VERIFIED_CAPTION_CHARS == 420
+    assert MAX_VERIFIED_CAPTION_CHARS == 300
     for style, (_, maximum) in STYLE_LIMITS.items():
         minimum = HARD_MIN_WORDS[style]
         at_minimum = " ".join(f"word{i}" for i in range(minimum))
