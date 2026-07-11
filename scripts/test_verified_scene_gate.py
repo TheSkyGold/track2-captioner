@@ -361,7 +361,11 @@ class StylePromptTests(unittest.TestCase):
             "objects being handled or used",
         ):
             self.assertIn(phrase, observer)
+        self.assertIn("first claim must state", observer)
+        self.assertIn("prefer the dynamic action over posture", observer)
         self.assertIn("non-redundant distinctive details", verifier)
+        self.assertIn("keep at least one central action or state", verifier)
+        self.assertIn("prefer a visually confirmed dynamic action", verifier)
         self.assertNotIn("nails", observer)
         self.assertNotIn("jewelry", observer)
 
