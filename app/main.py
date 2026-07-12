@@ -97,6 +97,15 @@ async def _run_one(sem: asyncio.Semaphore, task: dict[str, Any]) -> dict[str, An
                         caption_one_video(video_url=video_url, styles=styles),
                         timeout=min(PER_TASK_TIMEOUT_S, _remaining_budget()),
                     )
+            elif CAPTION_ENGINE == "qwen_direct":
+                # Opt-in experimental path. Lazy import keeps the default and
+                # legacy v36 paths unchanged unless explicitly selected.
+                from app.qwen_direct import caption_qwen_direct
+
+                captions = await asyncio.wait_for(
+                    caption_qwen_direct(video_url=video_url, styles=styles),
+                    timeout=task_timeout,
+                )
             else:
                 captions = await asyncio.wait_for(
                     caption_one_video(video_url=video_url, styles=styles),

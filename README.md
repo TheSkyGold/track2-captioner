@@ -52,6 +52,11 @@ A single-model fallback (`CAPTION_ENGINE=pipeline`: Qwen3-VL-235B describe →
 writer) is available for lower-cost runs. The runtime degrades gracefully:
 provider failover, non-empty styled fallbacks, never malformed output.
 
+An experimental direct profile is available only when explicitly selected with
+`CAPTION_ENGINE=qwen_direct`. It sends four uniform 1024px frames to four
+independent Qwen multimodal calls (one per style), then falls back to the legacy
+pipeline for any missing style. The Docker default remains `ensemble`.
+
 **Dossier:** `SUBMISSION.md`, `docs/video_script.md`, `docs/slides.html`,
 `docs/comparison.html` (models side by side), `docs/official.html` (captions on
 the jury clips). Test any video: `python -m app.webapp` → upload or paste a URL.
@@ -161,8 +166,11 @@ Copy `.env.example` to `.env` for local development. Do not commit real keys.
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CAPTION_ENGINE` | Docker: `ensemble`; source: `pipeline` | Select `ensemble`, `pipeline`, or the opt-in `qwen_direct` candidate. |
 | `FIREWORKS_API_KEY` | empty | Required for real VLM/style inference. |
 | `FIREWORKS_BASE_URL` | `https://api.fireworks.ai/inference/v1` | OpenAI-compatible Fireworks endpoint. |
+| `QWEN_DIRECT_MODEL` | `accounts/fireworks/models/qwen3p7-plus` | Model used only by `CAPTION_ENGINE=qwen_direct`. |
+| `QWEN_DIRECT_HTTP_TIMEOUT_S` | `45` | Per-request network timeout for the opt-in direct engine. |
 | `PROVIDER_ORDER` | `groq,fireworks,openrouter` | Default provider priority. |
 | `DESCRIBE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for video understanding. |
 | `STYLE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for style caption writing. |
