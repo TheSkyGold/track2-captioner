@@ -214,6 +214,43 @@ def test_each_style_keeps_the_existing_single_retry_contract() -> None:
         assert all(result[style] == f"retry-safe {style}" for style in _STYLES)
 
 
+def test_each_style_retries_malformed_writer_json() -> None:
+    with _loaded_ensemble("1") as ensemble:
+        base_system = ensemble._writer_system()
+        attempts = {style: 0 for style in _STYLES}
+        original_sleep = ensemble.asyncio.sleep
+
+        async def no_sleep(_seconds: float) -> None:
+            return None
+
+        async def fake_call(
+            client, model, system, content, max_tokens, temperature=0.5
+        ) -> str:
+            if system == ensemble.OBSERVE_SYSTEM:
+                return '["A verified subject is visible."]'
+            suffix = system[len(base_system):]
+            style = next(style for style in _STYLES if f'"{style}"' in suffix)
+            attempts[style] += 1
+            if style == "formal" and attempts[style] == 1:
+                return "not-json"
+            return json.dumps({"caption": f"parse-safe {style}"})
+
+        ensemble.asyncio.sleep = no_sleep
+        ensemble._call = fake_call
+        try:
+            result = _run_with_frame(ensemble)
+        finally:
+            ensemble.asyncio.sleep = original_sleep
+
+        assert attempts == {
+            "formal": 2,
+            "sarcastic": 1,
+            "humorous_tech": 1,
+            "humorous_non_tech": 1,
+        }
+        assert result == {style: f"parse-safe {style}" for style in _STYLES}
+
+
 def test_flag_is_strict_and_off_unless_explicitly_enabled() -> None:
     for value in (None, "", "0", "false", "False", "off", "no", " 0 "):
         with _loaded_ensemble(value) as ensemble:
@@ -236,6 +273,7 @@ def main() -> None:
     test_default_off_preserves_the_v38_common_writer()
     test_on_runs_four_style_writers_concurrently_with_one_observation_spine()
     test_each_style_keeps_the_existing_single_retry_contract()
+    test_each_style_retries_malformed_writer_json()
     test_flag_is_strict_and_off_unless_explicitly_enabled()
     print("w4_style_split_ok")
 

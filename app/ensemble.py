@@ -290,7 +290,7 @@ async def caption_ensemble_frames(
 
             async def write_style(style: str) -> tuple[str, str]:
                 style_system = _style_writer_system(style, system)
-                raw = ""
+                caption = ""
                 for attempt in range(2):
                     try:
                         raw = await _call(
@@ -301,15 +301,20 @@ async def caption_ensemble_frames(
                             per_style_tokens,
                             temperature=WRITER_TEMP,
                         )
+                        caption = str(_parse_obj(raw).get("caption", ""))
                         break
-                    except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                    except (
+                        httpx.HTTPStatusError,
+                        httpx.TransportError,
+                        ValueError,
+                    ) as e:
                         if attempt == 1:
                             raise
                         log.warning(
                             "writer %s attempt 1 failed (%s), retrying once", style, e
                         )
                         await asyncio.sleep(2)
-                return style, str(_parse_obj(raw).get("caption", ""))
+                return style, caption
 
             caps = dict(
                 await asyncio.gather(
