@@ -18,12 +18,15 @@ def validate_v36_manifest(payload: dict[str, object]) -> str:
         raise ValueError("v36 linux/amd64 child mismatch")
 
     platform = {"os": "linux", "architecture": "amd64"}
-    matches = [
-        child
-        for child in children
-        if isinstance(child, dict) and child.get("platform") == platform
-    ]
-    if len(matches) != 1 or matches[0].get("digest") != EXPECTED_AMD64:
+    if len(children) != 1:
+        raise ValueError("v36 linux/amd64 child mismatch")
+
+    child = children[0]
+    if (
+        not isinstance(child, dict)
+        or child.get("platform") != platform
+        or child.get("digest") != EXPECTED_AMD64
+    ):
         raise ValueError("v36 linux/amd64 child mismatch")
     return EXPECTED_AMD64
 

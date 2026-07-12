@@ -66,6 +66,28 @@ def test_v36_manifest_rejects_attestation_child() -> None:
     assert_rejected(manifest, "unknown/unknown attestation child was accepted")
 
 
+def test_v36_manifest_rejects_valid_child_plus_attestation() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "amd64")
+    manifest["manifests"].append(
+        {
+            "digest": "sha256:" + "9" * 64,
+            "platform": {"os": "unknown", "architecture": "unknown"},
+        }
+    )
+    assert_rejected(manifest, "valid child plus unknown/unknown attestation was accepted")
+
+
+def test_v36_manifest_rejects_valid_child_plus_wrong_platform() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "amd64")
+    manifest["manifests"].append(
+        {
+            "digest": "sha256:" + "a" * 64,
+            "platform": {"os": "linux", "architecture": "arm64"},
+        }
+    )
+    assert_rejected(manifest, "valid child plus wrong-platform child was accepted")
+
+
 def test_v36_manifest_rejects_wrong_amd64_digest() -> None:
     manifest = fixture_manifest(EXPECTED_INDEX, "sha256:" + "f" * 64, "linux", "amd64")
     assert_rejected(manifest, "wrong linux/amd64 digest was accepted")
@@ -167,6 +189,8 @@ def main() -> None:
     test_v36_manifest_rejects_wrong_index()
     test_v36_manifest_rejects_mutable_index_reference()
     test_v36_manifest_rejects_attestation_child()
+    test_v36_manifest_rejects_valid_child_plus_attestation()
+    test_v36_manifest_rejects_valid_child_plus_wrong_platform()
     test_v36_manifest_rejects_wrong_amd64_digest()
     test_v36_manifest_rejects_missing_amd64_child()
     test_v36_manifest_rejects_duplicate_amd64_children()
