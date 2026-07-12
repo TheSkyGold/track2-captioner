@@ -509,7 +509,7 @@ def _ffprobe_duration(video: Path) -> float:
         return 0.0
 
 
-def _ffprobe_video_last_pts(video: Path, timeout_s: float) -> float:
+def _ffprobe_video_timestamps(video: Path, timeout_s: float) -> list[float]:
     timeout_value = _positive_finite(timeout_s, "ffprobe timeout")
     out = subprocess.check_output(
         [
@@ -530,10 +530,14 @@ def _ffprobe_video_last_pts(video: Path, timeout_s: float) -> float:
             continue
         if math.isfinite(timestamp) and timestamp >= 0:
             timestamps.append(timestamp)
-    last_timestamp = max(timestamps, default=0.0)
-    if last_timestamp <= 0:
-        raise ValueError("ffprobe returned no positive video frame timestamp")
-    return last_timestamp
+    timestamps = sorted(set(timestamps))
+    if not timestamps:
+        raise ValueError("ffprobe returned no video frame timestamp")
+    return timestamps
+
+
+def _ffprobe_video_last_pts(video: Path, timeout_s: float) -> float:
+    return _ffprobe_video_timestamps(video, timeout_s)[-1]
 
 
 def _positive_finite(value: float, name: str) -> float:
@@ -543,6 +547,16 @@ def _positive_finite(value: float, name: str) -> float:
         raise ValueError(f"{name} must be a positive finite number") from error
     if not math.isfinite(numeric) or numeric <= 0:
         raise ValueError(f"{name} must be a positive finite number")
+    return numeric
+
+
+def _nonnegative_finite(value: float, name: str) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a non-negative finite number") from error
+    if not math.isfinite(numeric) or numeric < 0:
+        raise ValueError(f"{name} must be a non-negative finite number")
     return numeric
 
 
@@ -630,6 +644,7 @@ def _extract_frames_at_timestamps(
     max_edge: int,
     jpeg_quality: int,
     deadline: float | None = None,
+    allow_repeated: bool = False,
 ) -> list[Path]:
     if not isinstance(max_edge, int) or isinstance(max_edge, bool) or max_edge <= 0:
         raise ValueError("max_edge must be a positive integer")
@@ -640,16 +655,21 @@ def _extract_frames_at_timestamps(
     ):
         raise ValueError("jpeg_quality must be an integer between 1 and 100")
 
+    validator = _nonnegative_finite if allow_repeated else _positive_finite
     timestamp_values = [
-        _positive_finite(timestamp, "frame timestamp") for timestamp in timestamps
+        validator(timestamp, "frame timestamp") for timestamp in timestamps
     ]
     if not timestamp_values:
         raise ValueError("at least one frame timestamp is required")
-    if any(
-        current <= previous
-        for previous, current in zip(timestamp_values, timestamp_values[1:])
-    ):
-        raise ValueError("frame timestamps must be strictly increasing")
+    pairs = zip(timestamp_values, timestamp_values[1:])
+    out_of_order = (
+        any(current < previous for previous, current in pairs)
+        if allow_repeated
+        else any(current <= previous for previous, current in pairs)
+    )
+    if out_of_order:
+        order = "non-decreasing" if allow_repeated else "strictly increasing"
+        raise ValueError(f"frame timestamps must be {order}")
 
     frames: list[Path] = []
     if deadline is None:
@@ -698,10 +718,21 @@ def _extract_ratio_frames(
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("12-second frame extraction budget exhausted")
-    last_video_pts = _ffprobe_video_last_pts(
+    frame_timestamps = _ffprobe_video_timestamps(
         video, timeout_s=min(3.0, remaining)
     )
-    timestamps = _ratio_timestamps(last_video_pts, profile)
+    last_video_pts = frame_timestamps[-1]
+    ratio_timestamps = _ratio_timestamps(
+        last_video_pts if last_video_pts > 0 else 1.0,
+        profile,
+    )
+    timestamps = [
+        min(
+            frame_timestamps,
+            key=lambda frame_pts: (abs(frame_pts - target), frame_pts),
+        )
+        for target in ratio_timestamps
+    ]
     return _extract_frames_at_timestamps(
         video=video,
         workdir=workdir,
@@ -709,6 +740,7 @@ def _extract_ratio_frames(
         max_edge=max_edge,
         jpeg_quality=85,
         deadline=deadline,
+        allow_repeated=True,
     )
 
 

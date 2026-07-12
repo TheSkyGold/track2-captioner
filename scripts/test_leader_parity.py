@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 import app.pipeline as pipeline
 from app.pipeline import (
     FRAME_PROFILES,
@@ -116,7 +118,41 @@ def _run_fixture_ffmpeg(arguments: list[str]) -> None:
     )
 
 
-def test_real_low_fps_clip_extracts_all_ratio_frames() -> None:
+def _center_rgb(path: Path) -> tuple[int, int, int]:
+    with Image.open(path) as image:
+        rgb = image.convert("RGB")
+        return rgb.getpixel((rgb.width // 2, rgb.height // 2))
+
+
+def test_real_single_frame_clip_accepts_zero_pts() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        video = root / "single_frame.mp4"
+        workdir = root / "frames"
+        workdir.mkdir()
+        _run_fixture_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=green:s=64x64:r=1:d=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(video),
+            ]
+        )
+
+        assert pipeline._ffprobe_video_last_pts(video, timeout_s=3.0) == 0.0
+        frames = _extract_ratio_frames(
+            video, workdir, "endpoint_aware", max_edge=64
+        )
+        assert len(frames) == 8
+        assert all(_center_rgb(frame)[1] > 100 for frame in frames)
+
+
+def test_real_low_fps_clip_represents_beginning_and_end() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         video = root / "low_fps.mp4"
@@ -127,7 +163,13 @@ def test_real_low_fps_clip_extracts_all_ratio_frames() -> None:
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=red:s=64x64:r=1:d=2",
+                "color=c=red:s=64x64:r=1:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64:r=1:d=1",
+                "-filter_complex",
+                "[0:v][1:v]concat=n=2:v=1:a=0",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
@@ -143,6 +185,11 @@ def test_real_low_fps_clip_extracts_all_ratio_frames() -> None:
         )
         assert len(frames) == 8
         assert all(frame.stat().st_size > 0 for frame in frames)
+        first = _center_rgb(frames[0])
+        last = _center_rgb(frames[-1])
+        assert first[0] > 200 and first[2] < 40, first
+        assert last[2] > 200 and last[0] < 40, last
+        assert len({_center_rgb(frame) for frame in frames}) >= 2
 
 
 def test_real_audio_longer_than_video_uses_video_timeline() -> None:
@@ -516,10 +563,10 @@ def test_ratio_extractor_uses_ffprobe_and_never_scene_detection() -> None:
     with tempfile.TemporaryDirectory() as directory:
         workdir = Path(directory)
         video = workdir / "clip.mp4"
-        expected_timestamps = _ratio_timestamps(30.0, "endpoint_aware")
         expected_frames = [workdir / f"leader_{index:02d}.jpg" for index in range(1, 9)]
+        expected_timestamps = [0.0, 0.0, 0.0, 0.0, 30.0, 30.0, 30.0, 30.0]
         with patch("app.pipeline.time.monotonic", side_effect=[100.0, 100.0]), patch(
-            "app.pipeline._ffprobe_video_last_pts", return_value=30.0
+            "app.pipeline._ffprobe_video_timestamps", return_value=[0.0, 30.0]
         ) as ffprobe, patch(
             "app.pipeline._extract_frames_at_timestamps", return_value=expected_frames
         ) as extract, patch(
@@ -541,6 +588,7 @@ def test_ratio_extractor_uses_ffprobe_and_never_scene_detection() -> None:
             max_edge=768,
             jpeg_quality=85,
             deadline=112.0,
+            allow_repeated=True,
         )
         scene_extract.assert_not_called()
 
@@ -605,7 +653,8 @@ def main() -> None:
     test_public_timestamp_profiles_are_exact()
     test_thirty_second_profiles_are_ordered_and_bounded()
     test_ratio_timestamp_validation()
-    test_real_low_fps_clip_extracts_all_ratio_frames()
+    test_real_single_frame_clip_accepts_zero_pts()
+    test_real_low_fps_clip_represents_beginning_and_end()
     test_real_audio_longer_than_video_uses_video_timeline()
     test_official_repo_indices_match_reference_and_edges()
     test_ffmpeg_fps_extract_command_and_nonempty_sorted_output()
