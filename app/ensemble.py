@@ -73,6 +73,17 @@ WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
 # Causal ablation: optional creative-style discipline. Off by default so the
 # existing writer system remains byte-identical unless explicitly enabled.
 CREATIVE_DISCIPLINE = _strict_env_bool("CREATIVE_DISCIPLINE")
+# W4 causal ablation: keep the v38 observation/factual spine intact, but let
+# four independent writer calls focus on one requested style each. Off by
+# default so the v38 common-writer path remains unchanged unless selected.
+W4_STYLE_SPLIT = _strict_env_bool("W4_STYLE_SPLIT")
+_WRITER_TOTAL_MAX_TOKENS = 3000
+_STYLE_WRITER_STYLES = (
+    "formal",
+    "sarcastic",
+    "humorous_tech",
+    "humorous_non_tech",
+)
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
     "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
@@ -169,6 +180,18 @@ def _writer_system() -> str:
     )
 
 
+def _style_writer_system(style: str, base_system: str) -> str:
+    """Append only the per-style output contract to the exact v38 prompt."""
+    if style not in _STYLE_WRITER_STYLES:
+        raise ValueError(f"unsupported writer style: {style}")
+    return (
+        base_system
+        + "\n\nSTYLE-SPECIFIC OUTPUT OVERRIDE: For this call, produce only the "
+        + f'"{style}" caption while applying every factual and style rule above. '
+        + "Return STRICT JSON only: {\"caption\":\"...\"}"
+    )
+
+
 async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any,
                 max_tokens: int, temperature: float = 0.5) -> str:
     r = await client.post(
@@ -262,21 +285,59 @@ async def caption_ensemble_frames(
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
         )
         system = _writer_system()
-        # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
-        # discards the whole ensemble. One retry on transient writer failure -
-        # cheaper than the alternative (a full 150s single-model pipeline rerun).
-        raw = ""
-        for attempt in range(2):
-            try:
-                raw = await _call(client, WRITER, system, write_content, 3000,
-                                  temperature=WRITER_TEMP)
-                break
-            except (httpx.HTTPStatusError, httpx.TransportError) as e:
-                if attempt == 1:
-                    raise
-                log.warning("writer attempt 1 failed (%s), retrying once", e)
-                await asyncio.sleep(2)
-        caps = _parse_obj(raw)
+        if W4_STYLE_SPLIT:
+            per_style_tokens = _WRITER_TOTAL_MAX_TOKENS // len(_STYLE_WRITER_STYLES)
+
+            async def write_style(style: str) -> tuple[str, str]:
+                style_system = _style_writer_system(style, system)
+                raw = ""
+                for attempt in range(2):
+                    try:
+                        raw = await _call(
+                            client,
+                            WRITER,
+                            style_system,
+                            write_content,
+                            per_style_tokens,
+                            temperature=WRITER_TEMP,
+                        )
+                        break
+                    except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                        if attempt == 1:
+                            raise
+                        log.warning(
+                            "writer %s attempt 1 failed (%s), retrying once", style, e
+                        )
+                        await asyncio.sleep(2)
+                return style, str(_parse_obj(raw).get("caption", ""))
+
+            caps = dict(
+                await asyncio.gather(
+                    *(write_style(style) for style in _STYLE_WRITER_STYLES)
+                )
+            )
+        else:
+            # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
+            # discards the whole ensemble. One retry on transient writer failure -
+            # cheaper than the alternative (a full 150s single-model pipeline rerun).
+            raw = ""
+            for attempt in range(2):
+                try:
+                    raw = await _call(
+                        client,
+                        WRITER,
+                        system,
+                        write_content,
+                        _WRITER_TOTAL_MAX_TOKENS,
+                        temperature=WRITER_TEMP,
+                    )
+                    break
+                except (httpx.HTTPStatusError, httpx.TransportError) as e:
+                    if attempt == 1:
+                        raise
+                    log.warning("writer attempt 1 failed (%s), retrying once", e)
+                    await asyncio.sleep(2)
+            caps = _parse_obj(raw)
     return {k: str(caps.get(k, "")) for k in styles}
 
 
