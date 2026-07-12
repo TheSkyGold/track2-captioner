@@ -47,7 +47,8 @@ def test_profile_matches_the_predeclared_direct_candidate() -> None:
     assert Q.TEMPERATURE == 0.7
     assert Q.MAX_TOKENS == 400
     assert Q.REASONING_EFFORT == "none"
-    assert Q.MAX_ATTEMPTS == 2
+    assert Q.MAX_ATTEMPTS == 3
+    assert Q.STYLE_CONCURRENCY == 1
 
 
 def test_build_request_contains_four_images_and_one_style_only() -> None:
@@ -188,6 +189,171 @@ def test_four_independent_style_calls_preserve_requested_keys() -> None:
     )
 
 
+def test_style_calls_share_one_default_inflight_slot() -> None:
+    current = 0
+    peak = 0
+
+    async def requester(_payload: dict) -> str:
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        await asyncio.sleep(0.01)
+        current -= 1
+        return "A grounded caption."
+
+    original_concurrency = Q.STYLE_CONCURRENCY
+    try:
+        Q.STYLE_CONCURRENCY = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            captions = asyncio.run(
+                Q.caption_styles_from_frames(
+                    _frames(Path(tmp)),
+                    STYLES,
+                    requester=requester,
+                    retry_delay_s=0,
+                )
+            )
+    finally:
+        Q.STYLE_CONCURRENCY = original_concurrency
+
+    assert peak == 1
+    assert list(captions) == STYLES
+
+
+def test_style_limit_is_shared_across_concurrent_videos() -> None:
+    current = 0
+    peak = 0
+
+    async def requester(_payload: dict) -> str:
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        await asyncio.sleep(0.01)
+        current -= 1
+        return "A grounded caption."
+
+    async def run_two(frames: list[Path]) -> None:
+        await asyncio.gather(
+            Q.caption_styles_from_frames(
+                frames,
+                ["formal"],
+                requester=requester,
+                retry_delay_s=0,
+            ),
+            Q.caption_styles_from_frames(
+                frames,
+                ["sarcastic"],
+                requester=requester,
+                retry_delay_s=0,
+            ),
+        )
+
+    original_concurrency = Q.STYLE_CONCURRENCY
+    try:
+        Q.STYLE_CONCURRENCY = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            asyncio.run(run_two(_frames(Path(tmp))))
+    finally:
+        Q.STYLE_CONCURRENCY = original_concurrency
+
+    assert peak == 1
+
+
+def _http_429(retry_after: str) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.example.test/chat/completions")
+    response = httpx.Response(
+        429,
+        headers={"Retry-After": retry_after},
+        request=request,
+    )
+    return httpx.HTTPStatusError(
+        "rate limited",
+        request=request,
+        response=response,
+    )
+
+
+def test_429_retries_three_times_and_honors_retry_after() -> None:
+    attempts = 0
+    sleeps: list[float] = []
+    original_sleep = Q.asyncio.sleep
+    original_uniform = Q.random.uniform
+    try:
+        async def requester(_payload: dict) -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise _http_429("0.5")
+            return "A grounded caption."
+
+        async def fake_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        Q.asyncio.sleep = fake_sleep
+        Q.random.uniform = lambda lower, upper: upper
+        with tempfile.TemporaryDirectory() as tmp:
+            captions = asyncio.run(
+                Q.caption_styles_from_frames(
+                    _frames(Path(tmp)),
+                    ["formal"],
+                    requester=requester,
+                    retry_delay_s=0.1,
+                )
+            )
+    finally:
+        Q.asyncio.sleep = original_sleep
+        Q.random.uniform = original_uniform
+
+    assert attempts == 3
+    assert captions == {"formal": "A grounded caption."}
+    assert len(sleeps) == 2
+    assert all(0.5 < delay <= Q.RETRY_MAX_DELAY_S for delay in sleeps)
+
+
+def test_long_retry_after_falls_back_without_retrying_too_early() -> None:
+    attempts = 0
+    sleeps: list[float] = []
+    original_sleep = Q.asyncio.sleep
+    try:
+        async def requester(_payload: dict) -> str:
+            nonlocal attempts
+            attempts += 1
+            raise _http_429("600")
+
+        async def fake_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        Q.asyncio.sleep = fake_sleep
+        with tempfile.TemporaryDirectory() as tmp:
+            captions = asyncio.run(
+                Q.caption_styles_from_frames(
+                    _frames(Path(tmp)),
+                    ["formal"],
+                    requester=requester,
+                )
+            )
+    finally:
+        Q.asyncio.sleep = original_sleep
+
+    assert attempts == 1
+    assert sleeps == []
+    assert captions == {"formal": ""}
+
+
+def test_exponential_jitter_is_capped() -> None:
+    original_uniform = Q.random.uniform
+    try:
+        Q.random.uniform = lambda lower, upper: upper
+        delay = Q._retry_delay_seconds(
+            httpx.TransportError("temporary"),
+            attempt=20,
+            base_delay_s=0.75,
+        )
+    finally:
+        Q.random.uniform = original_uniform
+    assert 0 < delay <= Q.RETRY_MAX_DELAY_S
+
+
 def test_transient_failure_retries_only_the_failed_style() -> None:
     attempts: dict[str, int] = {}
 
@@ -231,7 +397,7 @@ def test_exhausted_style_returns_empty_for_pipeline_fallback() -> None:
         )
 
     assert captions == {"formal": ""}
-    assert calls == 2
+    assert calls == 3
 
 
 def test_extract_profile_uses_the_confirmed_fps_geometry() -> None:
@@ -416,6 +582,11 @@ def main() -> None:
     test_global_prompt_profile_selects_strong_v2_without_changing_v1()
     test_unknown_prompt_profile_fails_closed()
     test_four_independent_style_calls_preserve_requested_keys()
+    test_style_calls_share_one_default_inflight_slot()
+    test_style_limit_is_shared_across_concurrent_videos()
+    test_429_retries_three_times_and_honors_retry_after()
+    test_long_retry_after_falls_back_without_retrying_too_early()
+    test_exponential_jitter_is_capped()
     test_transient_failure_retries_only_the_failed_style()
     test_exhausted_style_returns_empty_for_pipeline_fallback()
     test_extract_profile_uses_the_confirmed_fps_geometry()

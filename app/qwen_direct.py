@@ -12,9 +12,13 @@ import asyncio
 import base64
 import logging
 import os
+import random
 import subprocess
 import tempfile
+import weakref
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,8 +46,13 @@ FRAME_MAX_EDGE = 1024
 TEMPERATURE = 0.7
 MAX_TOKENS = 400
 REASONING_EFFORT = "none"
-MAX_ATTEMPTS = 2
+MAX_ATTEMPTS = 3
 HTTP_TIMEOUT_S = float(os.environ.get("QWEN_DIRECT_HTTP_TIMEOUT_S", "45"))
+STYLE_CONCURRENCY = int(os.environ.get("QWEN_DIRECT_STYLE_CONCURRENCY", "1"))
+RETRY_MAX_DELAY_S = float(os.environ.get("QWEN_DIRECT_RETRY_MAX_DELAY_S", "4"))
+RETRY_JITTER_CAP_S = float(
+    os.environ.get("QWEN_DIRECT_RETRY_JITTER_CAP_S", "0.35")
+)
 PROMPT_PROFILE = (
     os.environ.get("QWEN_DIRECT_PROMPT_PROFILE", "v1").strip().casefold()
     or "v1"
@@ -108,6 +117,17 @@ _GROUNDING_RULES_STRONG_V2 = (
 )
 
 Requester = Callable[[dict[str, Any]], Awaitable[str]]
+_STYLE_SEMAPHORES: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    tuple[int, asyncio.Semaphore],
+] = weakref.WeakKeyDictionary()
+
+if STYLE_CONCURRENCY < 1:
+    raise ValueError("QWEN_DIRECT_STYLE_CONCURRENCY must be at least 1")
+if RETRY_MAX_DELAY_S <= 0:
+    raise ValueError("QWEN_DIRECT_RETRY_MAX_DELAY_S must be positive")
+if RETRY_JITTER_CAP_S < 0:
+    raise ValueError("QWEN_DIRECT_RETRY_JITTER_CAP_S must not be negative")
 
 
 def _validate_styles(styles: list[str]) -> None:
@@ -123,6 +143,17 @@ def _validate_frames(frames: list[Path]) -> None:
         raise ValueError(f"qwen_direct requires exactly {FRAME_COUNT} frames")
     if any(not frame.is_file() or frame.stat().st_size <= 0 for frame in frames):
         raise ValueError("every qwen_direct frame must be a non-empty file")
+
+
+def _shared_style_semaphore() -> asyncio.Semaphore:
+    """Share one provider limit across every video on the current event loop."""
+    loop = asyncio.get_running_loop()
+    existing = _STYLE_SEMAPHORES.get(loop)
+    if existing is None or existing[0] != STYLE_CONCURRENCY:
+        semaphore = asyncio.Semaphore(STYLE_CONCURRENCY)
+        _STYLE_SEMAPHORES[loop] = (STYLE_CONCURRENCY, semaphore)
+        return semaphore
+    return existing[1]
 
 
 def _system_prompt(style: str, prompt_profile: str) -> str:
@@ -218,6 +249,46 @@ async def _fireworks_request(payload: dict[str, Any]) -> str:
         return _message_text(response.json())
 
 
+def _retry_after_seconds(error: Exception) -> float | None:
+    if not isinstance(error, httpx.HTTPStatusError):
+        return None
+    if error.response.status_code != 429:
+        return None
+    raw = error.response.headers.get("Retry-After", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            value = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return max(0.0, value)
+
+
+def _retry_delay_seconds(
+    error: Exception,
+    *,
+    attempt: int,
+    base_delay_s: float,
+) -> float:
+    """Return a bounded backoff while respecting short server retry hints."""
+    if attempt < 0:
+        raise ValueError("retry attempt must not be negative")
+    base = max(0.0, float(base_delay_s))
+    exponential = min(RETRY_MAX_DELAY_S, base * (2**attempt))
+    jitter_ceiling = min(RETRY_JITTER_CAP_S, exponential)
+    jitter = random.uniform(0.0, jitter_ceiling) if jitter_ceiling else 0.0
+    retry_after = _retry_after_seconds(error)
+    if retry_after is not None:
+        return min(RETRY_MAX_DELAY_S, retry_after + jitter)
+    return min(RETRY_MAX_DELAY_S, exponential + jitter)
+
+
 async def _caption_style_from_frames(
     frames: list[Path],
     style: str,
@@ -232,6 +303,19 @@ async def _caption_style_from_frames(
                 raise ValueError("caption response is empty")
             return P._extract_final_caption(text).strip().strip('"').strip("'").strip()
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+            retry_after = _retry_after_seconds(error)
+            if (
+                retry_after is not None
+                and retry_after > RETRY_MAX_DELAY_S
+            ):
+                log.warning(
+                    "direct caption defers [%s]: Retry-After %.2fs exceeds "
+                    "the %.2fs retry budget",
+                    style,
+                    retry_after,
+                    RETRY_MAX_DELAY_S,
+                )
+                return ""
             if attempt + 1 == MAX_ATTEMPTS:
                 log.warning(
                     "direct caption failed [%s] after %d attempts: %s",
@@ -240,9 +324,19 @@ async def _caption_style_from_frames(
                     error,
                 )
                 return ""
-            log.warning("direct caption retry [%s]: %s", style, error)
-            if retry_delay_s > 0:
-                await asyncio.sleep(retry_delay_s * (2**attempt))
+            delay = _retry_delay_seconds(
+                error,
+                attempt=attempt,
+                base_delay_s=retry_delay_s,
+            )
+            log.warning(
+                "direct caption retry [%s] in %.2fs: %s",
+                style,
+                delay,
+                error,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
     return ""
 
 
@@ -257,9 +351,20 @@ async def caption_styles_from_frames(
     _validate_styles(styles)
     _validate_frames(frames)
     request = requester or _fireworks_request
+    semaphore = _shared_style_semaphore()
+
+    async def limited_request(payload: dict[str, Any]) -> str:
+        async with semaphore:
+            return await request(payload)
+
     results = await asyncio.gather(
         *(
-            _caption_style_from_frames(frames, style, request, retry_delay_s)
+            _caption_style_from_frames(
+                frames,
+                style,
+                limited_request,
+                retry_delay_s,
+            )
             for style in styles
         )
     )
