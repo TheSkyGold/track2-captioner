@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.baseline_manifest import (  # noqa: E402
+    EXPECTED_AMD64,
+    EXPECTED_INDEX,
+    validate_v36_manifest,
+)
+
+
+def fixture_manifest(
+    index_digest: str,
+    child_digest: str,
+    os_name: str,
+    architecture: str,
+) -> dict[str, object]:
+    return {
+        "index_digest": index_digest,
+        "manifests": [
+            {
+                "digest": child_digest,
+                "platform": {"os": os_name, "architecture": architecture},
+            }
+        ],
+    }
+
+
+def assert_rejected(payload: dict[str, object], message: str) -> None:
+    try:
+        validate_v36_manifest(payload)
+    except ValueError:
+        return
+    raise AssertionError(message)
+
+
+def test_v36_manifest_requires_exact_index_and_amd64_child() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "amd64")
+    assert validate_v36_manifest(manifest) == EXPECTED_AMD64
+
+
+def test_v36_manifest_rejects_wrong_index() -> None:
+    manifest = fixture_manifest("sha256:" + "0" * 64, EXPECTED_AMD64, "linux", "amd64")
+    assert_rejected(manifest, "wrong index digest was accepted")
+
+
+def test_v36_manifest_rejects_mutable_index_reference() -> None:
+    manifest = fixture_manifest(
+        "ghcr.io/theskygold/track2-captioner:latest",
+        EXPECTED_AMD64,
+        "linux",
+        "amd64",
+    )
+    assert_rejected(manifest, "mutable index reference was accepted")
+
+
+def test_v36_manifest_rejects_attestation_child() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, "sha256:" + "9" * 64, "unknown", "unknown")
+    assert_rejected(manifest, "unknown/unknown attestation child was accepted")
+
+
+def test_v36_manifest_rejects_wrong_amd64_digest() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, "sha256:" + "f" * 64, "linux", "amd64")
+    assert_rejected(manifest, "wrong linux/amd64 digest was accepted")
+
+
+def test_v36_manifest_rejects_missing_amd64_child() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "arm64")
+    assert_rejected(manifest, "manifest without a linux/amd64 child was accepted")
+
+
+def test_v36_manifest_rejects_duplicate_amd64_children() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "amd64")
+    child = manifest["manifests"][0]
+    manifest["manifests"] = [child, dict(child)]
+    assert_rejected(manifest, "duplicate linux/amd64 children were accepted")
+
+
+def test_cli_writes_deterministic_sanitized_manifest() -> None:
+    manifest = fixture_manifest(EXPECTED_INDEX, EXPECTED_AMD64, "linux", "amd64")
+    manifest["metadata"] = {"untrusted": "omitted"}
+    expected = json.dumps(
+        {
+            "index_digest": EXPECTED_INDEX,
+            "manifests": [
+                {
+                    "digest": EXPECTED_AMD64,
+                    "platform": {"architecture": "amd64", "os": "linux"},
+                }
+            ],
+        },
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "input.json"
+        output_path = Path(directory) / "sanitized.json"
+        input_path.write_text(json.dumps(manifest), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "baseline_manifest.py"),
+                str(input_path),
+                "--output",
+                str(output_path),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == f"{EXPECTED_AMD64}\n"
+        assert output_path.read_text(encoding="utf-8") == expected
+
+
+def test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred() -> None:
+    evidence_path = ROOT / "docs" / "evals" / "v36-baseline-manifest.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert set(evidence) == {
+        "attributed_digest",
+        "displayed_historical_score",
+        "evaluation_timestamp",
+        "image",
+        "index_digest",
+        "linux_amd64_digest",
+        "note",
+        "reference",
+        "resubmission_timestamp",
+        "schema",
+        "score_attribution",
+        "source_commit",
+    }
+    assert evidence["index_digest"] == EXPECTED_INDEX
+    assert evidence["linux_amd64_digest"] == EXPECTED_AMD64
+    assert evidence["source_commit"] == "283ce7f"
+    assert evidence["displayed_historical_score"] == 0.9133
+    assert evidence["score_attribution"] == "timestamp-inferred"
+    assert evidence["attributed_digest"] is None
+    assert evidence["resubmission_timestamp"] is None
+    assert evidence["evaluation_timestamp"] is None
+    assert "did not expose" in evidence["note"]
+    assert "not cryptographically proven" in evidence["note"]
+
+
+def test_controlled_c0_dockerfile_pins() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    for assignment in (
+        "CAPTION_ENGINE=ensemble",
+        "MAX_CAPTION_CHARS=1600",
+        "NUM_FRAMES=10",
+        "FRAME_MAX_EDGE=896",
+    ):
+        assert assignment in dockerfile, f"Dockerfile does not pin {assignment}"
+
+
+def main() -> None:
+    test_v36_manifest_requires_exact_index_and_amd64_child()
+    test_v36_manifest_rejects_wrong_index()
+    test_v36_manifest_rejects_mutable_index_reference()
+    test_v36_manifest_rejects_attestation_child()
+    test_v36_manifest_rejects_wrong_amd64_digest()
+    test_v36_manifest_rejects_missing_amd64_child()
+    test_v36_manifest_rejects_duplicate_amd64_children()
+    test_cli_writes_deterministic_sanitized_manifest()
+    test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred()
+    test_controlled_c0_dockerfile_pins()
+    print("baseline_manifest_ok")
+
+
+if __name__ == "__main__":
+    main()
