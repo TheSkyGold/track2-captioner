@@ -24,6 +24,10 @@ jobs:
           PYTHONPATH: .
       - name: Four-observer submission-profile guard
         run: python scripts/test_qwen4_observer_profile.py
+      - name: W4 per-style writer guard
+        run: python scripts/test_w4_style_split.py
+        env:
+          PYTHONPATH: .
 
   docker-build:
     runs-on: ubuntu-latest

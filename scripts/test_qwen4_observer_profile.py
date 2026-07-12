@@ -1,9 +1,9 @@
-"""Focused offline guard for the measured four-observer submission profile.
+"""Focused offline guard for the measured W4 submission profile.
 
-The candidate is the v36 runtime profile with one controlled change only:
-Qwen3-VL 235B is appended as the fourth observer.  Publication paths also
-disable BuildKit provenance/SBOM attestations so GHCR exposes one amd64 image
-manifest rather than an image plus unknown-platform attestation manifests.
+The candidate keeps the measured v38 four-observer profile and enables the
+validated per-style W4 writer path. Publication paths also disable BuildKit
+provenance/SBOM attestations so GHCR exposes one amd64 image manifest rather
+than an image plus unknown-platform attestation manifests.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ V36_PROFILE: list[tuple[str, str]] = [
     ("STYLE_EXEMPLARS", "1"),
     ("STRICT_GROUNDING", "0"),
     ("WRITER_TEMP", "0.5"),
+    ("W4_STYLE_SPLIT", "1"),
     ("TIMESTAMP_FRAMES", "0"),
     ("MAX_CAPTION_CHARS", "1600"),
     ("OPENROUTER_VLM_MODEL", "qwen/qwen3-vl-235b-a22b-instruct"),
@@ -102,7 +103,11 @@ def test_exactly_four_observers_in_measured_order() -> None:
     assert len(set(observers)) == 4
 
 
-def test_no_other_v36_submission_config_drift() -> None:
+def test_w4_style_split_is_enabled() -> None:
+    assert dict(_submission_profile())["W4_STYLE_SPLIT"] == "1"
+
+
+def test_no_other_v38_submission_config_drift() -> None:
     expected = list(V36_PROFILE)
     observer_index = next(
         index for index, (key, _value) in enumerate(expected)
@@ -133,7 +138,8 @@ def test_publish_paths_disable_provenance_and_sbom() -> None:
 
 def main() -> None:
     test_exactly_four_observers_in_measured_order()
-    test_no_other_v36_submission_config_drift()
+    test_w4_style_split_is_enabled()
+    test_no_other_v38_submission_config_drift()
     test_publish_paths_disable_provenance_and_sbom()
     print("qwen4_observer_profile_ok")
 
