@@ -71,10 +71,22 @@ Dockerfile now pins `W4_STYLE_SPLIT=1`, and an independently built image reports
 - `GLOBAL_BUDGET_S=540`
 - uncompressed image size about 252 MB
 
-A second 12-clip run with `--cpus=2 --memory=4g --memory-swap=4g` was correctly
-stopped after OpenRouter began returning HTTP 402 because the account balance
-was negative. Its outputs are invalid and are excluded from quality/runtime
-evidence. Repeat this exact capped run after funding before tagging the release.
+A first resource-capped attempt was correctly stopped after OpenRouter began
+returning HTTP 402 because the account balance was negative. Its outputs are
+invalid and excluded. After funding, the exact release image repeated the run
+with `--cpus=2 --memory=4g --memory-swap=4g` in `285.7` seconds: 12/12 task IDs,
+48/48 requested captions, zero empty or static fallback captions, and a maximum
+caption length of 1,589 characters. All paid-model responses returned HTTP 200;
+one observer transport failure was tolerated by the remaining three observers.
+
+The public release is:
+
+- reference: `ghcr.io/theskygold/track2-captioner:submission-v40`
+- digest: `sha256:ae956e8516116c7a2d684ffd9c91fed1beda7ddd05268cce7f144b82333f8975`
+- anonymous pull: verified with an empty Docker credential directory
+- platform: `linux/amd64`
+- size: 252,351,148 bytes uncompressed
+- degraded public contract: 3/3 task rows and 12/12 captions passed self-check
 
 ## Rejected competitor-derived hypotheses
 
@@ -95,8 +107,7 @@ evidence. Repeat this exact capped run after funding before tagging the release.
 - [x] W4 enabled in Dockerfile and guarded in CI.
 - [x] Malformed per-style writer JSON retried.
 - [x] Offline preflight green.
-- [ ] OpenRouter balance positive and a one-request paid-model probe returns 200.
-- [ ] Exact release image passes 12 clips under 2 CPU / 4 GB in under ten minutes.
-- [ ] Public GHCR digest and anonymous contract run verified.
-- [ ] Lablab resubmission confirmation captured.
-
+- [x] OpenRouter balance positive and a one-request paid-model probe returns 200.
+- [x] Exact release image passes 12 clips under 2 CPU / 4 GB in under ten minutes.
+- [x] Public GHCR digest and anonymous contract run verified.
+- [x] Lablab resubmission confirmation captured; edit form re-read shows v40.
