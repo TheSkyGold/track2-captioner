@@ -31,7 +31,7 @@ COPY app/ ./app/
 # The harness mounts /input and /output at runtime and injects NO env vars,
 # so the submission profile is pinned here. Non-secret config is plain ENV.
 # Submission engine = ENSEMBLE (measured best on the official jury distribution:
-# 0.942 accuracy, ~14.8 correct details/caption, lowest contradictions). Three
+# 0.942 accuracy, ~14.8 correct details/caption, lowest contradictions). Four
 # frontier vision models observe the frames; Claude Opus 4.5 cross-references and
 # writes. To fall back to the single-model pipeline, set CAPTION_ENGINE=pipeline.
 ENV PYTHONPATH=/app \
