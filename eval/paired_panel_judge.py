@@ -84,8 +84,12 @@ def build_blind_assignments(
 
 
 def judge_caption_prompt(caption_a: str, caption_b: str) -> str:
-    """Render only anonymous caption labels and their text for the judge."""
-    return f"Caption A:\n{caption_a}\n\nCaption B:\n{caption_b}"
+    """Encode anonymous captions in unambiguous judge-facing containers."""
+    return json.dumps(
+        {"Caption A": caption_a, "Caption B": caption_b},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def write_assignment_cache(
@@ -128,11 +132,24 @@ def write_assignment_cache(
     )
 
 
-def read_assignment_cache(path: Path) -> AssignmentMap:
-    """Load a persisted concealed mapping and reject malformed cache records."""
+def read_assignment_cache(
+    path: Path,
+    *,
+    expected_seed: str,
+    expected_judge_model: str,
+) -> AssignmentMap:
+    """Load a concealed mapping only when its provenance matches expectations."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema") != CACHE_SCHEMA:
         raise ValueError("unsupported blind assignment cache schema")
+    for field, expected in (
+        ("seed", expected_seed),
+        ("judge_model", expected_judge_model),
+    ):
+        if field not in payload:
+            raise ValueError(f"blind assignment cache is missing {field}")
+        if payload[field] != expected:
+            raise ValueError(f"blind assignment cache {field} mismatch")
     records = payload.get("assignments")
     if not isinstance(records, list):
         raise ValueError("blind assignment cache must contain an assignments list")
