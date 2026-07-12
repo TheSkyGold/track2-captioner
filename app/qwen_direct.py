@@ -44,8 +44,12 @@ MAX_TOKENS = 400
 REASONING_EFFORT = "none"
 MAX_ATTEMPTS = 2
 HTTP_TIMEOUT_S = float(os.environ.get("QWEN_DIRECT_HTTP_TIMEOUT_S", "45"))
+PROMPT_PROFILE = (
+    os.environ.get("QWEN_DIRECT_PROMPT_PROFILE", "v1").strip().casefold()
+    or "v1"
+)
 
-_STYLE_PERSONAS = {
+_STYLE_PERSONAS_V1 = {
     "formal": (
         "You are a professional video captioner. Write in an objective, factual, "
         "neutral tone with precise visible details and no humor."
@@ -65,13 +69,42 @@ _STYLE_PERSONAS = {
     ),
 }
 
-_GROUNDING_RULES = (
+_GROUNDING_RULES_V1 = (
     " The four images are chronological frames from one video. Mention the main "
     "subject, visible action, setting, and meaningful change only when the frames "
     "support them. Do not infer identity, intent, dialogue, unseen events, brands, "
     "or exact counts that are unclear. Write one compact English caption of one or "
     "two complete sentences, normally 25-55 words. Return only the caption: no label, "
     "preamble, analysis, markdown, or JSON."
+)
+
+_STYLE_PERSONAS_STRONG_V2 = {
+    "formal": (
+        "Write a professional, objective, factual video caption with no humor "
+        "or editorial judgment."
+    ),
+    "sarcastic": (
+        "Write a clearly sarcastic caption with unmistakable dry irony. The wit "
+        "must be obvious, not merely factual, while every scene claim stays literal. "
+        "Use no technology jargon or exclamation marks."
+    ),
+    "humorous_tech": (
+        "Write a clearly funny caption using one explicit technology or programming "
+        "metaphor tied directly to the main visible action. Do not add a second gag."
+    ),
+    "humorous_non_tech": (
+        "Write an obvious everyday joke or familiar-life comparison tied directly "
+        "to the main visible action. Use no technical jargon."
+    ),
+}
+
+_GROUNDING_RULES_STRONG_V2 = (
+    " Use exactly one complete sentence of 18-32 words. Select only the main "
+    "subject, main directly visible action, and a safe general setting. Omit "
+    "chronology, camera changes, clothing, colors, counts, directions, and minor "
+    "objects unless unmistakably supported by the four frames. Do not turn sampled "
+    "differences into a temporal story or infer identity, intent, dialogue, or unseen "
+    "events. Return only the caption with no label, preamble, analysis, markdown, or JSON."
 )
 
 Requester = Callable[[dict[str, Any]], Awaitable[str]]
@@ -92,10 +125,30 @@ def _validate_frames(frames: list[Path]) -> None:
         raise ValueError("every qwen_direct frame must be a non-empty file")
 
 
-def build_request(style: str, frames: list[Path]) -> dict[str, Any]:
+def _system_prompt(style: str, prompt_profile: str) -> str:
+    if not isinstance(prompt_profile, str):
+        raise ValueError("unknown qwen direct prompt profile")
+    profile = prompt_profile.strip().casefold()
+    if profile == "v1":
+        return _STYLE_PERSONAS_V1[style] + _GROUNDING_RULES_V1
+    if profile == "strong_v2":
+        return (
+            _STYLE_PERSONAS_STRONG_V2[style]
+            + _GROUNDING_RULES_STRONG_V2
+        )
+    raise ValueError(f"unknown qwen direct prompt profile: {prompt_profile}")
+
+
+def build_request(
+    style: str,
+    frames: list[Path],
+    *,
+    prompt_profile: str | None = None,
+) -> dict[str, Any]:
     """Build one style-specific Fireworks multimodal request."""
     _validate_styles([style])
     _validate_frames(frames)
+    profile = PROMPT_PROFILE if prompt_profile is None else prompt_profile
     content: list[dict[str, Any]] = [
         {
             "type": "text",
@@ -118,7 +171,7 @@ def build_request(style: str, frames: list[Path]) -> dict[str, Any]:
         "messages": [
             {
                 "role": "system",
-                "content": _STYLE_PERSONAS[style] + _GROUNDING_RULES,
+                "content": _system_prompt(style, profile),
             },
             {"role": "user", "content": content},
         ],

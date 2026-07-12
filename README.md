@@ -171,6 +171,7 @@ Copy `.env.example` to `.env` for local development. Do not commit real keys.
 | `FIREWORKS_BASE_URL` | `https://api.fireworks.ai/inference/v1` | OpenAI-compatible Fireworks endpoint. |
 | `QWEN_DIRECT_MODEL` | `accounts/fireworks/models/qwen3p7-plus` | Model used only by `CAPTION_ENGINE=qwen_direct`. |
 | `QWEN_DIRECT_HTTP_TIMEOUT_S` | `45` | Per-request network timeout for the opt-in direct engine. |
+| `QWEN_DIRECT_PROMPT_PROFILE` | `v1` | Select `strong_v2` for the opt-in short, conservative, strongly styled prompt ablation. |
 | `PROVIDER_ORDER` | `groq,fireworks,openrouter` | Default provider priority. |
 | `DESCRIBE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for video understanding. |
 | `STYLE_PROVIDER_ORDER` | `PROVIDER_ORDER` | Provider priority for style caption writing. |

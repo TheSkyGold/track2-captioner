@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import sys
 import tempfile
 import types
@@ -77,6 +78,80 @@ def test_build_request_contains_four_images_and_one_style_only() -> None:
         assert url.startswith("data:image/jpeg;base64,")
         encoded = url.split(",", 1)[1]
         assert base64.b64decode(encoded) == f"jpeg-{index}".encode("ascii")
+
+
+def test_v1_prompt_profile_remains_byte_stable() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = _frames(Path(tmp))
+        system = Q.build_request(
+            "formal", frames, prompt_profile="v1"
+        )["messages"][0]["content"]
+    assert hashlib.sha256(system.encode("utf-8")).hexdigest() == (
+        "f6f6f4e96070165c817335a2cbfc3713d8a142b44cb94940f8379cba6208ec51"
+    )
+
+
+def test_strong_v2_has_short_safe_core_and_distinct_style_signals() -> None:
+    systems: dict[str, str] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = _frames(Path(tmp))
+        for style in STYLES:
+            payload = Q.build_request(
+                style, frames, prompt_profile="strong_v2"
+            )
+            systems[style] = payload["messages"][0]["content"].lower()
+            assert payload["temperature"] == Q.TEMPERATURE
+            assert payload["max_tokens"] == Q.MAX_TOKENS
+            assert payload["reasoning_effort"] == Q.REASONING_EFFORT
+
+    for system in systems.values():
+        assert "exactly one complete sentence" in system
+        assert "18-32 words" in system
+        assert "main subject" in system
+        assert "main directly visible action" in system
+        assert "safe general setting" in system
+        assert "chronology" in system
+        assert "clothing" in system
+        assert "colors" in system
+        assert "unless unmistakably" in system
+
+    assert "professional" in systems["formal"]
+    assert "objective" in systems["formal"]
+    assert "no humor" in systems["formal"]
+    assert "unmistakable dry irony" in systems["sarcastic"]
+    assert "not merely factual" in systems["sarcastic"]
+    assert "no technology jargon" in systems["sarcastic"]
+    assert "one explicit technology or programming metaphor" in systems[
+        "humorous_tech"
+    ]
+    assert "obvious everyday joke" in systems["humorous_non_tech"]
+    assert "no technical jargon" in systems["humorous_non_tech"]
+
+
+def test_global_prompt_profile_selects_strong_v2_without_changing_v1() -> None:
+    original = Q.PROMPT_PROFILE
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            frames = _frames(Path(tmp))
+            v1 = Q.build_request("sarcastic", frames, prompt_profile="v1")
+            Q.PROMPT_PROFILE = "strong_v2"
+            selected = Q.build_request("sarcastic", frames)
+    finally:
+        Q.PROMPT_PROFILE = original
+
+    assert selected["messages"][0]["content"] != v1["messages"][0]["content"]
+    assert "unmistakable dry irony" in selected["messages"][0]["content"].lower()
+
+
+def test_unknown_prompt_profile_fails_closed() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = _frames(Path(tmp))
+        try:
+            Q.build_request("formal", frames, prompt_profile="typo")
+        except ValueError as error:
+            assert "unknown qwen direct prompt profile" in str(error).lower()
+        else:
+            raise AssertionError("unknown prompt profile was silently accepted")
 
 
 def test_four_independent_style_calls_preserve_requested_keys() -> None:
@@ -336,6 +411,10 @@ def test_docker_default_is_untouched() -> None:
 def main() -> None:
     test_profile_matches_the_predeclared_direct_candidate()
     test_build_request_contains_four_images_and_one_style_only()
+    test_v1_prompt_profile_remains_byte_stable()
+    test_strong_v2_has_short_safe_core_and_distinct_style_signals()
+    test_global_prompt_profile_selects_strong_v2_without_changing_v1()
+    test_unknown_prompt_profile_fails_closed()
     test_four_independent_style_calls_preserve_requested_keys()
     test_transient_failure_retries_only_the_failed_style()
     test_exhausted_style_returns_empty_for_pipeline_fallback()
