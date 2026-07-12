@@ -54,6 +54,9 @@ WRITER_LENGTH_HINT = os.environ.get("WRITER_LENGTH_HINT", "")
 # temperature to curb invention.
 STRICT_GROUNDING = os.environ.get("STRICT_GROUNDING", "0") != "0"
 WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
+# Causal ablation: optional creative-style discipline. Off by default so the
+# existing writer system remains byte-identical unless explicitly enabled.
+CREATIVE_DISCIPLINE = os.environ.get("CREATIVE_DISCIPLINE", "0") != "0"
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
     "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
@@ -82,6 +85,17 @@ _EXEMPLAR_BLOCK = (
 _CONCISE_RULE = (
     " LENGTH: write each caption as 2-3 dense sentences (about 40-60 words) that "
     "pack the strongest verified details - vivid and specific, not a long paragraph."
+)
+
+_CREATIVE_DISCIPLINE_RULE = (
+    "\n\nCREATIVE DISCIPLINE: Creative humor is framing only; preserve literal scene "
+    "claims. For every creative caption, never assign an unseen profession, intent, "
+    "backstory, future action, or off-screen event. Tech terms must be explicit similes "
+    "or metaphors: never turn a person into a developer, and never turn typing into "
+    "commits or code. Use at most 2 metaphor or punchline devices per caption. Never "
+    'open with "Behold" or "Ah yes". Avoid repeating API, endpoint, deployment, or '
+    "zero-latency patterns. Preserve rich factual coverage and length; do not shorten "
+    "formal or globally cap captions."
 )
 
 OBSERVE_SYSTEM = (
@@ -119,6 +133,18 @@ WRITE_SYSTEM = (
     "everyday humor with ZERO technology words. Return STRICT JSON only: "
     '{"formal":"...","sarcastic":"...","humorous_tech":"...","humorous_non_tech":"..."}'
 )
+
+
+def _writer_system() -> str:
+    """Build the writer prompt, preserving the legacy bytes when ablations are off."""
+    return (
+        WRITE_SYSTEM
+        + (_CONCISE_RULE if CONCISE else "")
+        + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
+        + (_GROUNDING_RULE if STRICT_GROUNDING else "")
+        + (_EXEMPLAR_BLOCK if EXEMPLARS else "")
+        + (_CREATIVE_DISCIPLINE_RULE if CREATIVE_DISCIPLINE else "")
+    )
 
 
 async def _call(client: httpx.AsyncClient, model: str, system: str, content: Any,
@@ -213,10 +239,7 @@ async def caption_ensemble_frames(
             "Independent observation lists from several vision models for ONE clip. "
             "Cross-reference and write the four captions.\n\n" + "\n\n".join(blocks)
         )
-        system = (WRITE_SYSTEM + (_CONCISE_RULE if CONCISE else "")
-                  + ((" " + WRITER_LENGTH_HINT) if WRITER_LENGTH_HINT else "")
-                  + (_GROUNDING_RULE if STRICT_GROUNDING else "")
-                  + (_EXEMPLAR_BLOCK if EXEMPLARS else ""))
+        system = _writer_system()
         # 3000 tokens: 4 rich captions can exceed 2000 and a mid-JSON truncation
         # discards the whole ensemble. One retry on transient writer failure -
         # cheaper than the alternative (a full 150s single-model pipeline rerun).
