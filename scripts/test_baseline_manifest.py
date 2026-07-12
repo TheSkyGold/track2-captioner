@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,43 @@ from scripts.baseline_manifest import (  # noqa: E402
     EXPECTED_INDEX,
     validate_v36_manifest,
 )
+
+
+def parse_dockerfile_env_assignments(dockerfile: str) -> list[tuple[str, str]]:
+    logical_instructions: list[str] = []
+    fragments: list[str] = []
+
+    for raw_line in dockerfile.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        continued = stripped.endswith("\\")
+        fragments.append(stripped[:-1].rstrip() if continued else stripped)
+        if not continued:
+            logical_instructions.append(" ".join(fragments))
+            fragments = []
+
+    if fragments:
+        logical_instructions.append(" ".join(fragments))
+
+    assignments: list[tuple[str, str]] = []
+    for instruction in logical_instructions:
+        name, separator, arguments = instruction.partition(" ")
+        if not separator or name.upper() != "ENV":
+            continue
+
+        tokens = shlex.split(arguments, posix=True)
+        if tokens and "=" not in tokens[0]:
+            assignments.append((tokens[0], " ".join(tokens[1:])))
+            continue
+
+        for token in tokens:
+            key, equals, value = token.partition("=")
+            if key and equals:
+                assignments.append((key, value))
+
+    return assignments
 
 
 def fixture_manifest(
@@ -144,6 +182,64 @@ def test_cli_writes_deterministic_sanitized_manifest() -> None:
         assert output_path.read_text(encoding="utf-8") == expected
 
 
+def assert_sanitized_cli_failure(input_path: Path) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "baseline_manifest.py"),
+            str(input_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == "baseline manifest validation failed\n"
+    assert "Traceback" not in completed.stderr
+    for forbidden_path in (input_path.resolve(), ROOT.resolve(), Path(sys.executable).resolve()):
+        assert str(forbidden_path).casefold() not in completed.stderr.casefold()
+
+
+def test_cli_sanitizes_missing_input_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        assert_sanitized_cli_failure(Path(directory) / "missing.json")
+
+
+def test_cli_sanitizes_unreadable_input_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        assert_sanitized_cli_failure(Path(directory))
+
+
+def test_cli_sanitizes_malformed_json_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "malformed.json"
+        input_path.write_text("{not-json", encoding="utf-8")
+        assert_sanitized_cli_failure(input_path)
+
+
+def test_cli_sanitizes_non_object_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "list.json"
+        input_path.write_text("[]", encoding="utf-8")
+        assert_sanitized_cli_failure(input_path)
+
+
+def test_cli_sanitizes_manifest_validation_failure() -> None:
+    manifest = fixture_manifest(
+        "sha256:" + "0" * 64,
+        EXPECTED_AMD64,
+        "linux",
+        "amd64",
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "wrong-digest.json"
+        input_path.write_text(json.dumps(manifest), encoding="utf-8")
+        assert_sanitized_cli_failure(input_path)
+
+
 def test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred() -> None:
     evidence_path = ROOT / "docs" / "evals" / "v36-baseline-manifest.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -173,15 +269,52 @@ def test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred() -> None:
     assert "not cryptographically proven" in evidence["note"]
 
 
+def test_dockerfile_env_parser_ignores_inactive_and_prefixed_text() -> None:
+    dockerfile = """
+# ENV CAPTION_ENGINE=ensemble
+ENV NOT_CAPTION_ENGINE=ensemble
+CAPTION_ENGINE=ensemble
+RUN printf 'CAPTION_ENGINE=ensemble'
+plain text CAPTION_ENGINE=ensemble
+"""
+
+    assert parse_dockerfile_env_assignments(dockerfile) == [
+        ("NOT_CAPTION_ENGINE", "ensemble")
+    ]
+
+
+def test_dockerfile_env_parser_reads_multiline_key_value_pairs() -> None:
+    dockerfile = (
+        "ENV CAPTION_ENGINE=ensemble \\\n"
+        "    MAX_CAPTION_CHARS=1600 \\\n"
+        "    NUM_FRAMES=10 \\\n"
+        "    FRAME_MAX_EDGE=896\n"
+    )
+
+    assert parse_dockerfile_env_assignments(dockerfile) == [
+        ("CAPTION_ENGINE", "ensemble"),
+        ("MAX_CAPTION_CHARS", "1600"),
+        ("NUM_FRAMES", "10"),
+        ("FRAME_MAX_EDGE", "896"),
+    ]
+
+
 def test_controlled_c0_dockerfile_pins() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    for assignment in (
-        "CAPTION_ENGINE=ensemble",
-        "MAX_CAPTION_CHARS=1600",
-        "NUM_FRAMES=10",
-        "FRAME_MAX_EDGE=896",
-    ):
-        assert assignment in dockerfile, f"Dockerfile does not pin {assignment}"
+    expected = {
+        "CAPTION_ENGINE": "ensemble",
+        "MAX_CAPTION_CHARS": "1600",
+        "NUM_FRAMES": "10",
+        "FRAME_MAX_EDGE": "896",
+    }
+    pins = [
+        assignment
+        for assignment in parse_dockerfile_env_assignments(dockerfile)
+        if assignment[0] in expected
+    ]
+
+    assert len(pins) == len(expected), f"Dockerfile pins must be unique: {pins!r}"
+    assert dict(pins) == expected, f"Dockerfile pins differ: {pins!r}"
 
 
 def main() -> None:
@@ -195,7 +328,14 @@ def main() -> None:
     test_v36_manifest_rejects_missing_amd64_child()
     test_v36_manifest_rejects_duplicate_amd64_children()
     test_cli_writes_deterministic_sanitized_manifest()
+    test_cli_sanitizes_missing_input_failure()
+    test_cli_sanitizes_unreadable_input_failure()
+    test_cli_sanitizes_malformed_json_failure()
+    test_cli_sanitizes_non_object_failure()
+    test_cli_sanitizes_manifest_validation_failure()
     test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred()
+    test_dockerfile_env_parser_ignores_inactive_and_prefixed_text()
+    test_dockerfile_env_parser_reads_multiline_key_value_pairs()
     test_controlled_c0_dockerfile_pins()
     print("baseline_manifest_ok")
 

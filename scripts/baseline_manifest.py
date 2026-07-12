@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -55,14 +56,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    payload = json.loads(args.manifest.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("manifest payload must be a JSON object")
+    try:
+        payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("manifest payload must be a JSON object")
 
-    sanitized = sanitized_manifest(payload)
-    if args.output is not None:
-        rendered = json.dumps(sanitized, indent=2, sort_keys=True) + "\n"
-        args.output.write_text(rendered, encoding="utf-8", newline="\n")
+        sanitized = sanitized_manifest(payload)
+        if args.output is not None:
+            rendered = json.dumps(sanitized, indent=2, sort_keys=True) + "\n"
+            args.output.write_text(rendered, encoding="utf-8", newline="\n")
+    except (OSError, ValueError):
+        print("baseline manifest validation failed", file=sys.stderr)
+        return 2
 
     print(EXPECTED_AMD64)
     return 0
