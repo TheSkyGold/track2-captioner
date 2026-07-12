@@ -1,6 +1,6 @@
 # Track 2 v38 Leader-Parity Engine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan one task at a time. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement reversible v38 causal profiles that restore factual recall and style strength while preserving the controlled C0 source fallback, immutable R0 whole-run rollback, and Track 2 contract.
 
@@ -82,7 +82,7 @@
 
 - [ ] At execution time, use the worktree skill to create codex/v38-causal-eval from commit 283ce7f unless the resolved v37 score is above the leader; record any different base explicitly.
 
-- [ ] Verify the controlled C0 profile has CAPTION_ENGINE=ensemble, ten frames, 896-pixel maximum edge, and MAX_CAPTION_CHARS=1600. R0 remains the whole-run rollback; C0 is a task-start source profile used for controlled ablations, never a late fallback.
+- [ ] Verify the controlled C0 profile has CAPTION_ENGINE=ensemble, ten frames, 896-pixel maximum edge, and MAX_CAPTION_CHARS=1600. R0 remains the whole-run rollback; C0 is a source profile selected at task initialization for controlled ablations, never a late fallback.
 
 - [ ] Run the test and commit.
 

@@ -61,7 +61,7 @@ def test_blind_assignment_is_stable_sha256_and_keyed_by_every_input() -> None:
     assert set(first) == {"baseline", "candidate"}
 
     assert blind_assignment("seed-1", "v1", "formal", "judge-a") != expected
-    assert blind_assignment("v38-gate-1", "task-1", "formal", "judge-a") != expected
+    assert blind_assignment("v38-gate-1", "clip-2", "formal", "judge-a") != expected
     assert blind_assignment("v38-gate-1", "v1", "style-1", "judge-a") != expected
     assert blind_assignment("v38-gate-1", "v1", "formal", "judge-5") != expected
 

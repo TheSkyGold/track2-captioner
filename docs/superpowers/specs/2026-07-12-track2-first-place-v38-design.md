@@ -83,7 +83,7 @@ The validator does not attempt open-world factual entailment with a small noun l
 - Bound HTTP retries and ignore long `Retry-After` values that threaten the global budget.
 - Preserve a provider fallback path and deterministic emergency captions.
 - Run two clips concurrently under a 75-second per-task deadline and one retry layer.
-- Use the immutable v36 image only as whole-run rollback. The source reconstruction remains available as a task-start C0 profile but is never entered after v38 inference has spent budget and is never labeled exact v36.
+- Use the immutable v36 image only as whole-run rollback. The source reconstruction remains available as a C0 profile selected at task initialization but is never entered after v38 inference has spent budget and is never labeled exact v36.
 
 ## 4. Alternative arms
 
