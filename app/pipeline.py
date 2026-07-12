@@ -15,11 +15,14 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +81,14 @@ OPENROUTER_STYLE_MODEL = os.environ.get("OPENROUTER_STYLE_MODEL", "qwen/qwen3-vl
 
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "8"))
 FRAME_MAX_EDGE = int(os.environ.get("FRAME_MAX_EDGE", "720"))
+FRAME_PROFILES = {
+    "describex_oci_hypothesis": tuple(
+        0.05 + index * (0.90 / 8) for index in range(8)
+    ),
+    "endpoint_aware": tuple(
+        0.05 + index * (0.90 / 7) for index in range(8)
+    ),
+}
 DIRECT_VIDEO_MAX_SECONDS = int(os.environ.get("DIRECT_VIDEO_MAX_SECONDS", "60"))
 SCENE_DETECT_ENABLED = os.environ.get("SCENE_DETECT_ENABLED", "1") != "0"
 SCENE_THRESHOLD = float(os.environ.get("SCENE_THRESHOLD", "0.35"))
@@ -496,6 +507,168 @@ def _ffprobe_duration(video: Path) -> float:
         return float(out)
     except Exception:  # noqa: BLE001
         return 0.0
+
+
+def _positive_finite(value: float, name: str) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a positive finite number") from error
+    if not math.isfinite(numeric) or numeric <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return numeric
+
+
+def _ratio_timestamps(duration: float, profile: str) -> list[float]:
+    duration_value = _positive_finite(duration, "video duration")
+    try:
+        ratios = FRAME_PROFILES[profile]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"unknown frame profile: {profile}") from error
+    return [round(duration_value * ratio, 3) for ratio in ratios]
+
+
+def _official_repo_indices(total_frames: int, target: int = 16) -> list[int]:
+    if total_frames <= 0:
+        raise ValueError("total_frames must be positive")
+    if target <= 0:
+        raise ValueError("target must be positive")
+    if total_frames <= target:
+        return list(range(total_frames))
+    indices = [math.floor(index * total_frames / target) for index in range(target)]
+    indices[0] = 0
+    indices[-1] = total_frames - 1
+    return sorted(set(indices))
+
+
+def _ffmpeg_fps_extract(
+    video: Path,
+    workdir: Path,
+    fps: float,
+    qscale: int,
+    total_timeout_s: float,
+) -> list[Path]:
+    fps_value = _positive_finite(fps, "extraction fps")
+    timeout_value = _positive_finite(total_timeout_s, "extraction timeout")
+    if not isinstance(qscale, int) or isinstance(qscale, bool) or not 1 <= qscale <= 31:
+        raise ValueError("qscale must be an integer between 1 and 31")
+
+    output_dir = workdir / "official_repo"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for stale_frame in output_dir.glob("frame_*.jpg"):
+        stale_frame.unlink()
+    output_pattern = output_dir / "frame_%03d.jpg"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(video), "-vf", f"fps={fps_value:.8f}",
+            "-q:v", str(qscale), str(output_pattern),
+        ],
+        check=True,
+        timeout=timeout_value,
+    )
+    frames = sorted(
+        frame
+        for frame in output_dir.glob("frame_*.jpg")
+        if frame.is_file() and frame.stat().st_size > 0
+    )
+    if not frames:
+        raise RuntimeError("official-repository extraction produced no frames")
+    return frames
+
+
+def _extract_official_repo_frames(
+    video: Path,
+    workdir: Path,
+    video_fps: float,
+    duration: float,
+) -> list[Path]:
+    fps_value = _positive_finite(video_fps, "video fps")
+    duration_value = _positive_finite(duration, "video duration")
+    extraction_fps = min(fps_value, 60.0 / duration_value)
+    extracted = _ffmpeg_fps_extract(
+        video=video,
+        workdir=workdir,
+        fps=extraction_fps,
+        qscale=2,
+        total_timeout_s=12.0,
+    )
+    return [extracted[index] for index in _official_repo_indices(len(extracted))]
+
+
+def _extract_frames_at_timestamps(
+    video: Path,
+    workdir: Path,
+    timestamps: Sequence[float],
+    max_edge: int,
+    jpeg_quality: int,
+) -> list[Path]:
+    if not isinstance(max_edge, int) or isinstance(max_edge, bool) or max_edge <= 0:
+        raise ValueError("max_edge must be a positive integer")
+    if (
+        not isinstance(jpeg_quality, int)
+        or isinstance(jpeg_quality, bool)
+        or not 1 <= jpeg_quality <= 100
+    ):
+        raise ValueError("jpeg_quality must be an integer between 1 and 100")
+
+    timestamp_values = [
+        _positive_finite(timestamp, "frame timestamp") for timestamp in timestamps
+    ]
+    if any(
+        current <= previous
+        for previous, current in zip(timestamp_values, timestamp_values[1:])
+    ):
+        raise ValueError("frame timestamps must be strictly increasing")
+
+    frames: list[Path] = []
+    deadline = time.monotonic() + 12.0
+    qscale = max(2, min(31, round((100 - jpeg_quality) * 0.29 + 2)))
+    scale = (
+        f"scale='min({max_edge},iw)':'min({max_edge},ih)':"
+        "force_original_aspect_ratio=decrease"
+    )
+    for index, timestamp in enumerate(timestamp_values, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("12-second frame extraction budget exhausted")
+        target = workdir / f"leader_{index:02d}.jpg"
+        target.unlink(missing_ok=True)
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{timestamp:.3f}", "-i", str(video),
+                "-frames:v", "1",
+                "-vf", scale,
+                "-q:v", str(qscale), str(target),
+            ],
+            check=True,
+            timeout=min(3.0, remaining),
+        )
+        if target.is_file() and target.stat().st_size > 0:
+            frames.append(target)
+    if len(frames) != len(timestamp_values):
+        raise RuntimeError(
+            f"extracted {len(frames)} of {len(timestamp_values)} requested frames"
+        )
+    return frames
+
+
+def _extract_ratio_frames(
+    video: Path,
+    workdir: Path,
+    profile: str,
+    max_edge: int = 768,
+) -> list[Path]:
+    duration = _ffprobe_duration(video)
+    timestamps = _ratio_timestamps(duration, profile)
+    return _extract_frames_at_timestamps(
+        video=video,
+        workdir=workdir,
+        timestamps=timestamps,
+        max_edge=max_edge,
+        jpeg_quality=85,
+    )
 
 
 # =============================================================================
