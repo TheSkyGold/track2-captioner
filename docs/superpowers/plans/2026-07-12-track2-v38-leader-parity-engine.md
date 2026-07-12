@@ -253,12 +253,21 @@
 - Create: app/leader_parity.py
 - Modify: scripts/test_leader_parity.py
 
+**Frozen R0 length evidence:** the exact v36 image produced 15 freshly executed
+clips / 60 captions with formal min/median/mean/max of 125/167/166.2/202 words,
+sarcastic 79/105/104.7/131, humorous_tech 83/104/103.6/130, and
+humorous_non_tech 86/104/106.8/132. The official score attached to this
+behavior is 0.9133. Consequently, this validator is a broad corruption/style
+guard, not a concise-output optimizer. Any shorter length policy remains an
+isolated L1 ablation and may not silently constrain every v38 arm.
+
 - [ ] Add failing tests covering:
   - fenced JSON and prose around JSON;
   - alias keys mapped only to requested styles;
   - missing, empty, non-string, and extra keys;
-  - 2-4 complete sentences;
-  - 40-120 words and at most 700 characters;
+  - formal: 3-9 complete sentences, 80-220 words;
+  - creative styles: 2-6 complete sentences, 40-150 words;
+  - at most 1600 characters for every style;
   - leaked analysis or repeated fragments;
   - technical jargon rejected from humorous_non_tech;
   - a natural technology or programming reference required in humorous_tech.
@@ -367,11 +376,13 @@
         violations: list[str] = []
         if not clean:
             violations.append("empty")
-        if not 2 <= len(sentences) <= 4:
+        sentence_min, sentence_max = ((3, 9) if style == "formal" else (2, 6))
+        word_min, word_max = ((80, 220) if style == "formal" else (40, 150))
+        if not sentence_min <= len(sentences) <= sentence_max:
             violations.append("sentence_count")
-        if not 40 <= len(words) <= 120:
+        if not word_min <= len(words) <= word_max:
             violations.append("word_count")
-        if len(clean) > 700:
+        if len(clean) > 1600:
             violations.append("character_count")
         lower = clean.casefold()
         if style in {"sarcastic", "humorous_non_tech"} and word_set.intersection(NON_TECH_BANNED):
@@ -565,7 +576,8 @@
   - GPT-OSS-120B in describex_official_repo and GPT-OSS-20B with DeepSeek V4 Flash fallback in describex_oci_hypothesis;
   - official repository uses one user message, temperature 0.3, no max_tokens, and only 2-4 sentences;
   - OCI hypothesis uses its observed creative-writer system message plus one user message, temperature 0.7, max_tokens 1528, and 2-4 sentences/40-120 words;
-  - only A_HARD adds system-role grounding rules, 40-100 target, 700-character cap, and repair;
+  - only A_HARD adds system-role grounding rules, R0-shaped style-specific
+    length targets, a 1600-character cap, and repair;
   - no repair call when all requested styles pass;
   - exactly one targeted repair when one style fails;
   - one joint retry instead of multiple repairs when zero or at least two styles fail;
@@ -577,8 +589,9 @@
 
     HARDENED_JOINT_STYLE_SYSTEM = (
         "Return one strict JSON object with exactly the requested style keys. "
-        "Each caption must be 2-4 complete English sentences, normally 40-100 "
-        "words, never over 120 words or 700 characters. Preserve the same visible "
+        "Formal must be 4-7 complete English sentences and normally 120-180 words. "
+        "Each creative style must be 3-5 sentences and normally 75-115 words. "
+        "No caption may exceed 1600 characters. Preserve the same visible "
         "facts in every style. A joke may add a comparison, never a new subject, "
         "object, action, place, identity, or event."
     )
@@ -1194,7 +1207,11 @@
 
 - [ ] Add tests that provider usage fields, elapsed seconds, retry count, selected profile, actual resolved models and fallbacks used per clip, and fallback reason are recorded as structured local metadata. The judge-independence filter consumes actual_models_used.
 
-- [ ] Raise the legacy normalization ceiling to 1600 characters while keeping the v38 validator cap at 700. Add an end-to-end test through app.main._amain proving a 660-character valid v38 caption remains 660 characters after both pipeline and main normalization.
+- [ ] Raise the legacy normalization ceiling to 1600 characters and keep the
+  broad v38 corruption guard at the same ceiling. Length-selection arms enforce
+  their own narrower targets without globally truncating rich R0-shaped output.
+  Add an end-to-end test through app.main._amain proving a 660-character valid
+  v38 caption remains 660 characters after both pipeline and main normalization.
 
     from app import main as M, models
 
