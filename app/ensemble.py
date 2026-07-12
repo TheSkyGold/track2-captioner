@@ -25,6 +25,22 @@ from app import pipeline as P
 
 log = logging.getLogger("track2.ensemble")
 
+
+def _strict_env_bool(name: str, default: bool = False) -> bool:
+    """Parse an explicit environment boolean without enabling on typos."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "on", "yes"}:
+        return True
+    if normalized in {"", "0", "false", "off", "no"}:
+        return False
+    raise ValueError(
+        f"{name} must be one of 1/true/on/yes or 0/false/off/no"
+    )
+
+
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 OBSERVERS = [m.strip() for m in os.environ.get(
@@ -56,7 +72,7 @@ STRICT_GROUNDING = os.environ.get("STRICT_GROUNDING", "0") != "0"
 WRITER_TEMP = float(os.environ.get("WRITER_TEMP", "0.5"))
 # Causal ablation: optional creative-style discipline. Off by default so the
 # existing writer system remains byte-identical unless explicitly enabled.
-CREATIVE_DISCIPLINE = os.environ.get("CREATIVE_DISCIPLINE", "0") != "0"
+CREATIVE_DISCIPLINE = _strict_env_bool("CREATIVE_DISCIPLINE")
 _GROUNDING_RULE = (
     "\n\nSTRICT GROUNDING + MAX COVERAGE (the judge rewards rich CORRECT detail): every "
     "concrete noun, colour, count, vehicle/animal/object TYPE, action, and piece of text "
@@ -90,12 +106,18 @@ _CONCISE_RULE = (
 _CREATIVE_DISCIPLINE_RULE = (
     "\n\nCREATIVE DISCIPLINE: Creative humor is framing only; preserve literal scene "
     "claims. For every creative caption, never assign an unseen profession, intent, "
-    "backstory, future action, or off-screen event. Tech terms must be explicit similes "
-    "or metaphors: never turn a person into a developer, and never turn typing into "
-    "commits or code. Use at most 2 metaphor or punchline devices per caption. Never "
+    "backstory, future action, or off-screen event. For humorous_tech, tech terms must "
+    "be explicit similes or metaphors, and every caption must include at least one "
+    "natural, visible-scene-tied marker chosen from API, latency, cache, runtime, server, "
+    "pipeline, or scheduler; vary the marker across clips and never force a cliche. Other "
+    "precise terms such as throughput may accompany that marker when relevant. Never turn "
+    "a person into a developer, and never turn typing into commits or code. Use at most 2 "
+    "metaphor or punchline devices per caption. Never "
     'open with "Behold" or "Ah yes". Avoid repeating API, endpoint, deployment, or '
-    "zero-latency patterns. Preserve rich factual coverage and length; do not shorten "
-    "formal or globally cap captions."
+    "zero-latency patterns. Apply these discipline rules only to sarcastic, "
+    "humorous_tech, and humorous_non_tech. This discipline adds no length limit: "
+    "preserve every already-active length instruction exactly, and leave formal governed "
+    "solely by the pre-existing formal rules."
 )
 
 OBSERVE_SYSTEM = (
