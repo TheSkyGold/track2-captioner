@@ -9,9 +9,13 @@ from urllib.request import url2pathname
 import httpx
 
 sys.stdout.reconfigure(encoding="utf-8")
-for line in open(".env"):
-    if line.startswith("OPENROUTER_API_KEY="):
-        os.environ.setdefault("OPENROUTER_API_KEY", line.partition("=")[2].strip())
+env_path = Path(".env")
+if env_path.is_file():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("OPENROUTER_API_KEY="):
+            os.environ.setdefault(
+                "OPENROUTER_API_KEY", line.partition("=")[2].strip()
+            )
 
 JUDGE = os.environ.get("JUDGE_MODEL", "google/gemini-3.1-pro-preview")
 STYLE_DEFS = {

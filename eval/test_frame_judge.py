@@ -16,7 +16,6 @@ def _load_frame_judge():
     spec = importlib.util.spec_from_file_location("frame_judge_under_test", module_path)
     module = importlib.util.module_from_spec(spec)
     with tempfile.TemporaryDirectory() as td:
-        Path(td, ".env").write_text("", encoding="utf-8")
         previous_cwd = os.getcwd()
         os.chdir(td)
         try:
