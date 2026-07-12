@@ -10,6 +10,8 @@ fi
 echo ">>> Building and pushing ${PUBLIC_IMAGE} for linux/amd64"
 docker buildx build \
     --platform linux/amd64 \
+    --provenance=false \
+    --sbom=false \
     --tag "${PUBLIC_IMAGE}" \
     --push \
     .

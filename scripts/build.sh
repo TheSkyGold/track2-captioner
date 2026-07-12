@@ -8,6 +8,8 @@ IMAGE="${IMAGE:-track2-captioner:dev}"
 echo ">>> Building ${IMAGE} for linux/amd64"
 docker buildx build \
     --platform linux/amd64 \
+    --provenance=false \
+    --sbom=false \
     --tag "${IMAGE}" \
     --load \
     .

@@ -22,6 +22,8 @@ jobs:
         run: python scripts/test_style_filter.py
         env:
           PYTHONPATH: .
+      - name: Four-observer submission-profile guard
+        run: python scripts/test_qwen4_observer_profile.py
 
   docker-build:
     runs-on: ubuntu-latest
