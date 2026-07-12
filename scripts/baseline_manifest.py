@@ -65,7 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output is not None:
             rendered = json.dumps(sanitized, indent=2, sort_keys=True) + "\n"
             args.output.write_text(rendered, encoding="utf-8", newline="\n")
-    except (OSError, ValueError):
+    except (OSError, RecursionError, ValueError):
         print("baseline manifest validation failed", file=sys.stderr)
         return 2
 

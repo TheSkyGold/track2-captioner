@@ -227,6 +227,13 @@ def test_cli_sanitizes_non_object_failure() -> None:
         assert_sanitized_cli_failure(input_path)
 
 
+def test_cli_sanitizes_recursive_json_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "deeply-nested.json"
+        input_path.write_text("[" * 5000 + "0" + "]" * 5000, encoding="utf-8")
+        assert_sanitized_cli_failure(input_path)
+
+
 def test_cli_sanitizes_manifest_validation_failure() -> None:
     manifest = fixture_manifest(
         "sha256:" + "0" * 64,
@@ -332,6 +339,7 @@ def main() -> None:
     test_cli_sanitizes_unreadable_input_failure()
     test_cli_sanitizes_malformed_json_failure()
     test_cli_sanitizes_non_object_failure()
+    test_cli_sanitizes_recursive_json_failure()
     test_cli_sanitizes_manifest_validation_failure()
     test_evidence_manifest_is_safe_and_explicitly_timestamp_inferred()
     test_dockerfile_env_parser_ignores_inactive_and_prefixed_text()
