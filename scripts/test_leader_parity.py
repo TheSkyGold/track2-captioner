@@ -16,6 +16,14 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from app.leader_parity import (
+    FACTUAL_REVIEW_STATUS,
+    REQUESTED_STYLES,
+    caption_violations,
+    normalize_requested_captions,
+    parse_json_object,
+    validate_caption_set,
+)
 import app.pipeline as pipeline
 from app.pipeline import (
     FRAME_PROFILES,
@@ -649,6 +657,405 @@ def test_invalid_ffprobe_output_is_rejected_before_extraction() -> None:
         extract.assert_not_called()
 
 
+def _counted_caption(
+    sentence_count: int,
+    word_count: int,
+    *,
+    required_words: tuple[str, ...] = (),
+    prefix: str = "detail",
+) -> str:
+    assert sentence_count > 0
+    assert word_count >= sentence_count
+    assert len(required_words) <= word_count
+    words = [*required_words]
+    token_prefix = "".join(
+        character for character in prefix if character.isalpha()
+    )[:2] or "w"
+    words.extend(
+        f"{token_prefix}{index}"
+        for index in range(word_count - len(required_words))
+    )
+    base_size, extra = divmod(word_count, sentence_count)
+    sentences: list[str] = []
+    offset = 0
+    for index in range(sentence_count):
+        size = base_size + (1 if index < extra else 0)
+        sentence_words = words[offset:offset + size]
+        sentences.append(" ".join(sentence_words) + ".")
+        offset += size
+    return " ".join(sentences)
+
+
+def _caption_with_exact_length(length: int) -> str:
+    caption = _counted_caption(3, 80, prefix="lengthword")
+    padding = length - len(caption)
+    assert padding >= 0
+    first_word, remainder = caption.split(" ", 1)
+    exact = first_word + ("x" * padding) + " " + remainder
+    assert len(" ".join(exact.split())) == length
+    return exact
+
+
+def test_parse_json_object_accepts_fences_prose_and_nested_objects() -> None:
+    expected = {
+        "formal": "A caption.",
+        "metadata": {"source": "panel", "literal": "brace { text }"},
+    }
+    encoded = (
+        '{"formal":"A caption.","metadata":'
+        '{"source":"panel","literal":"brace { text }"}}'
+    )
+    assert parse_json_object(f"```json\n{encoded}\n```") == expected
+    assert parse_json_object(f"Writer output follows:\n{encoded}\nEnd output.") == expected
+    assert parse_json_object(f"Prose cites [2026] before {encoded}") == expected
+
+
+def test_parse_json_object_rejects_zero_multiple_and_root_list() -> None:
+    invalid_inputs = (
+        "No structured output was returned.",
+        '{"formal":"first"}\n{"formal":"second"}',
+        '[{"formal":"inside a list"}]',
+        'Broken wrapper {"meta":{"formal":"salvaged"}',
+    )
+    for text in invalid_inputs:
+        _assert_raises(
+            ValueError,
+            lambda text=text: parse_json_object(text),
+            f"invalid JSON envelope was accepted: {text!r}",
+        )
+
+
+def test_parse_json_object_rejects_duplicate_keys() -> None:
+    _assert_raises(
+        ValueError,
+        lambda: parse_json_object('{"formal":"first","formal":"second"}'),
+        "duplicate JSON keys were silently overwritten",
+    )
+
+
+def test_normalize_requested_captions_maps_only_requested_aliases() -> None:
+    normalized = normalize_requested_captions(
+        {
+            "humorous-tech": "  Tech caption.  ",
+            "humorous-non-tech": "  Everyday caption.  ",
+        },
+        ["humorous_tech", "humorous_non_tech"],
+    )
+    assert normalized == {
+        "humorous_tech": "Tech caption.",
+        "humorous_non_tech": "Everyday caption.",
+    }
+    for alias in ("humorous-tech", "humorous-non-tech"):
+        _assert_raises(
+            ValueError,
+            lambda alias=alias: normalize_requested_captions(
+                {alias: "Creative caption."}, ["formal"]
+            ),
+            f"an unrequested alias was mapped: {alias}",
+        )
+
+
+def test_normalize_requested_captions_rejects_collisions_and_bad_values() -> None:
+    for alias, canonical in (
+        ("humorous-tech", "humorous_tech"),
+        ("humorous-non-tech", "humorous_non_tech"),
+    ):
+        _assert_raises(
+            ValueError,
+            lambda alias=alias, canonical=canonical: normalize_requested_captions(
+                {canonical: "Canonical.", alias: "Alias."}, [canonical]
+            ),
+            f"caption alias collision was accepted: {alias}",
+        )
+
+    invalid_payloads = (
+        {"formal": "Formal only."},
+        {"formal": "Formal.", "sarcastic": "Sarcastic.", "extra": "No."},
+        {"formal": "   ", "sarcastic": "Sarcastic."},
+        {"formal": 123, "sarcastic": "Sarcastic."},
+    )
+    requested = ["formal", "sarcastic"]
+    for payload in invalid_payloads:
+        _assert_raises(
+            ValueError,
+            lambda payload=payload: normalize_requested_captions(payload, requested),
+            f"invalid caption payload was accepted: {payload!r}",
+        )
+
+
+def test_formal_sentence_and_word_bands_have_inclusive_boundaries() -> None:
+    for sentence_count, word_count in ((3, 80), (9, 220)):
+        assert caption_violations(
+            "formal", _counted_caption(sentence_count, word_count)
+        ) == []
+
+    for sentence_count in (2, 10):
+        assert "sentence_count" in caption_violations(
+            "formal", _counted_caption(sentence_count, 80)
+        )
+    for word_count in (79, 221):
+        assert "word_count" in caption_violations(
+            "formal", _counted_caption(3, word_count)
+        )
+
+    complete_sentences = _counted_caption(3, 159, prefix="finished")
+    with_trailing_fragment = complete_sentences + " unfinished"
+    assert "sentence_count" in caption_violations(
+        "formal", with_trailing_fragment
+    )
+
+
+def test_creative_sentence_and_word_bands_have_inclusive_boundaries() -> None:
+    creative_styles = (
+        "sarcastic",
+        "humorous_tech",
+        "humorous_non_tech",
+    )
+    for style in creative_styles:
+        required = ("JavaScript",) if style == "humorous_tech" else ()
+        for sentence_count, word_count in ((2, 40), (6, 150)):
+            assert caption_violations(
+                style,
+                _counted_caption(
+                    sentence_count,
+                    word_count,
+                    required_words=required,
+                    prefix=style.replace("_", ""),
+                ),
+            ) == []
+        for sentence_count in (1, 7):
+            assert "sentence_count" in caption_violations(
+                style,
+                _counted_caption(
+                    sentence_count,
+                    40,
+                    required_words=required,
+                    prefix=style.replace("_", ""),
+                ),
+            )
+        for word_count in (39, 151):
+            assert "word_count" in caption_violations(
+                style,
+                _counted_caption(
+                    2,
+                    word_count,
+                    required_words=required,
+                    prefix=style.replace("_", ""),
+                ),
+            )
+        complete_sentences = _counted_caption(
+            2,
+            39,
+            required_words=required,
+            prefix=style.replace("_", ""),
+        )
+        assert "sentence_count" in caption_violations(
+            style, complete_sentences + " unfinished"
+        )
+
+
+def test_character_limit_is_1600_normalized_characters_inclusive() -> None:
+    at_limit = _caption_with_exact_length(1600)
+    over_limit = _caption_with_exact_length(1601)
+    raw_whitespace_over_limit = at_limit.replace(" ", "   ")
+    assert len(raw_whitespace_over_limit) > 1600
+    for style in REQUESTED_STYLES:
+        assert "character_count" not in caption_violations(style, at_limit)
+        assert "character_count" in caption_violations(style, over_limit)
+        assert "character_count" not in caption_violations(
+            style, raw_whitespace_over_limit
+        )
+
+
+def test_jargon_and_tech_markers_use_whole_words() -> None:
+    substring_traps = ("appearance", "happily", "apple", "within", "details")
+    non_tech = _counted_caption(
+        2, 40, required_words=substring_traps, prefix="ordinary"
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" not in caption_violations(style, non_tech)
+
+    ambiguous_senses = _counted_caption(
+        2,
+        40,
+        required_words=(
+            "cloud",
+            "model",
+            "bug",
+            "stack",
+            "program",
+            "server",
+            "cache",
+            "python",
+        ),
+        prefix="ordinary",
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" not in caption_violations(
+            style, ambiguous_senses
+        )
+    assert "missing_tech_reference" in caption_violations(
+        "humorous_tech", ambiguous_senses
+    )
+
+    actual_jargon = _counted_caption(
+        2, 40, required_words=("JavaScript",), prefix="ordinary"
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" in caption_violations(style, actual_jargon)
+
+    whole_word_app = _counted_caption(
+        2, 40, required_words=("app",), prefix="ordinary"
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" in caption_violations(style, whole_word_app)
+    assert "missing_tech_reference" not in caption_violations(
+        "humorous_tech", whole_word_app
+    )
+
+    compound_jargon = _counted_caption(
+        2, 40, required_words=("AI-powered",), prefix="ordinary"
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" in caption_violations(style, compound_jargon)
+
+    assert "missing_tech_reference" in caption_violations(
+        "humorous_tech", non_tech
+    )
+    natural_tech = _counted_caption(
+        2, 40, required_words=("JavaScript",), prefix="techscene"
+    )
+    assert caption_violations("humorous_tech", natural_tech) == []
+    for reference in ("server-side", "laptop", "Python script"):
+        contextual_tech = _counted_caption(
+            2, 40, required_words=tuple(reference.split()), prefix="techscene"
+        )
+        assert "missing_tech_reference" not in caption_violations(
+            "humorous_tech", contextual_tech
+        )
+
+    laptop_scene = _counted_caption(
+        2, 40, required_words=("laptop",), prefix="ordinary"
+    )
+    for style in ("sarcastic", "humorous_non_tech"):
+        assert "technical_jargon" not in caption_violations(style, laptop_scene)
+
+    for reference in ("server-side", "Python script"):
+        contextual_jargon = _counted_caption(
+            2, 40, required_words=tuple(reference.split()), prefix="ordinary"
+        )
+        for style in ("sarcastic", "humorous_non_tech"):
+            assert "technical_jargon" in caption_violations(
+                style, contextual_jargon
+            )
+
+
+def test_leaked_analysis_is_detected() -> None:
+    leaked = _counted_caption(
+        2,
+        40,
+        required_words=("Let's", "analyze", "the", "image", "step", "by", "step"),
+        prefix="leakword",
+    )
+    assert "leaked_reasoning" in caption_violations("sarcastic", leaked)
+
+    grounded = _counted_caption(
+        2,
+        40,
+        required_words=("A", "hiker", "moves", "step", "by", "step"),
+        prefix="grounded",
+    )
+    assert "leaked_reasoning" not in caption_violations("sarcastic", grounded)
+
+
+def test_repeated_substantial_fragment_is_detected() -> None:
+    fragment = ["bright", "birds", "circle", "above", "the", "quiet", "green", "field"]
+    repeated_words = fragment * 2
+    repeated_words.extend(f"unique{index}" for index in range(24))
+    repeated = (
+        " ".join(repeated_words[:20]) + ". "
+        + " ".join(repeated_words[20:]) + "."
+    )
+    assert "repeated_fragment" in caption_violations("sarcastic", repeated)
+
+
+def test_substantially_non_english_latin_text_is_detected() -> None:
+    spanish_words = [
+        "el", "gato", "camina", "lentamente", "por", "el", "bosque", "mientras",
+        "la", "luz", "suave", "atraviesa", "las", "ramas", "y", "las", "hojas",
+        "verdes", "cubren", "el", "sendero", "con", "sombras", "largas", "sobre",
+        "la", "tierra", "humeda", "mientras", "una", "brisa", "mueve", "los",
+        "arbustos", "cerca", "del", "camino", "bajo", "el", "cielo",
+    ]
+    assert len(spanish_words) == 40
+    non_english = (
+        " ".join(spanish_words[:20]) + ". "
+        + " ".join(spanish_words[20:]) + "."
+    )
+    assert "non_english" in caption_violations("humorous_non_tech", non_english)
+
+    non_latin = "猫 在 绿色 森林 里 安静 地 行走。" * 8
+    assert "non_english" in caption_violations("humorous_non_tech", non_latin)
+
+
+def test_validate_caption_set_flags_cross_style_near_duplicates() -> None:
+    caption = (
+        " ".join(f"word{index}" for index in range(20))
+        + ". "
+        + " ".join(f"word{index}" for index in range(20, 40))
+        + "."
+    )
+    variant = caption.replace("word0", "changedword", 1).replace(" ", "   ")
+    assert len(caption) > 200
+    assert variant != caption
+    failures = validate_caption_set(
+        {"sarcastic": caption, "humorous_non_tech": variant},
+        ["sarcastic", "humorous_non_tech"],
+    )
+    assert failures == {"humorous_non_tech": ["near_duplicate:sarcastic"]}
+
+
+def test_invented_claims_require_independent_factual_review() -> None:
+    factual_status = FACTUAL_REVIEW_STATUS
+    assert factual_status == "requires_independent_factual_review"
+    claims = ("unicorn", "forest", "mountain-lake")
+    cases = {
+        "formal": (
+            _counted_caption(
+                3, 80, required_words=claims, prefix="formalclaim"
+            ),
+            factual_status,
+        ),
+        "sarcastic": (
+            _counted_caption(
+                2, 40, required_words=claims, prefix="sarcasticclaim"
+            ),
+            factual_status,
+        ),
+        "humorous_tech": (
+            _counted_caption(
+                2,
+                40,
+                required_words=(*claims, "JavaScript"),
+                prefix="techclaim",
+            ),
+            factual_status,
+        ),
+        "humorous_non_tech": (
+            _counted_caption(
+                2, 40, required_words=claims, prefix="everydayclaim"
+            ),
+            factual_status,
+        ),
+    }
+    captions = {style: case[0] for style, case in cases.items()}
+    assert set(captions) == set(REQUESTED_STYLES)
+    assert validate_caption_set(captions, list(REQUESTED_STYLES)) == {}
+    assert {case[1] for case in cases.values()} == {factual_status}
+    for caption in captions.values():
+        assert all(claim in caption for claim in claims)
+
+
 def main() -> None:
     test_public_timestamp_profiles_are_exact()
     test_thirty_second_profiles_are_ordered_and_bounded()
@@ -670,6 +1077,20 @@ def main() -> None:
     test_ratio_extractor_bounds_ffprobe_timeout_and_propagates_it()
     test_ratio_extractor_shares_one_twelve_second_deadline()
     test_invalid_ffprobe_output_is_rejected_before_extraction()
+    test_parse_json_object_accepts_fences_prose_and_nested_objects()
+    test_parse_json_object_rejects_zero_multiple_and_root_list()
+    test_parse_json_object_rejects_duplicate_keys()
+    test_normalize_requested_captions_maps_only_requested_aliases()
+    test_normalize_requested_captions_rejects_collisions_and_bad_values()
+    test_formal_sentence_and_word_bands_have_inclusive_boundaries()
+    test_creative_sentence_and_word_bands_have_inclusive_boundaries()
+    test_character_limit_is_1600_normalized_characters_inclusive()
+    test_jargon_and_tech_markers_use_whole_words()
+    test_leaked_analysis_is_detected()
+    test_repeated_substantial_fragment_is_detected()
+    test_substantially_non_english_latin_text_is_detected()
+    test_validate_caption_set_flags_cross_style_near_duplicates()
+    test_invented_claims_require_independent_factual_review()
     print("leader_parity_sampling_ok")
 
 
