@@ -509,6 +509,33 @@ def _ffprobe_duration(video: Path) -> float:
         return 0.0
 
 
+def _ffprobe_video_last_pts(video: Path, timeout_s: float) -> float:
+    timeout_value = _positive_finite(timeout_s, "ffprobe timeout")
+    out = subprocess.check_output(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "packet=pts_time",
+            "-of", "csv=p=0",
+            str(video),
+        ],
+        text=True,
+        timeout=timeout_value,
+    )
+    timestamps: list[float] = []
+    for token in re.split(r"[\s,]+", out.strip()):
+        try:
+            timestamp = float(token)
+        except ValueError:
+            continue
+        if math.isfinite(timestamp) and timestamp >= 0:
+            timestamps.append(timestamp)
+    last_timestamp = max(timestamps, default=0.0)
+    if last_timestamp <= 0:
+        raise ValueError("ffprobe returned no positive video frame timestamp")
+    return last_timestamp
+
+
 def _positive_finite(value: float, name: str) -> float:
     try:
         numeric = float(value)
@@ -531,8 +558,8 @@ def _ratio_timestamps(duration: float, profile: str) -> list[float]:
 def _official_repo_indices(total_frames: int, target: int = 16) -> list[int]:
     if total_frames <= 0:
         raise ValueError("total_frames must be positive")
-    if target <= 0:
-        raise ValueError("target must be positive")
+    if target < 2:
+        raise ValueError("target must be at least two")
     if total_frames <= target:
         return list(range(total_frames))
     indices = [math.floor(index * total_frames / target) for index in range(target)]
@@ -602,6 +629,7 @@ def _extract_frames_at_timestamps(
     timestamps: Sequence[float],
     max_edge: int,
     jpeg_quality: int,
+    deadline: float | None = None,
 ) -> list[Path]:
     if not isinstance(max_edge, int) or isinstance(max_edge, bool) or max_edge <= 0:
         raise ValueError("max_edge must be a positive integer")
@@ -615,6 +643,8 @@ def _extract_frames_at_timestamps(
     timestamp_values = [
         _positive_finite(timestamp, "frame timestamp") for timestamp in timestamps
     ]
+    if not timestamp_values:
+        raise ValueError("at least one frame timestamp is required")
     if any(
         current <= previous
         for previous, current in zip(timestamp_values, timestamp_values[1:])
@@ -622,7 +652,10 @@ def _extract_frames_at_timestamps(
         raise ValueError("frame timestamps must be strictly increasing")
 
     frames: list[Path] = []
-    deadline = time.monotonic() + 12.0
+    if deadline is None:
+        deadline = time.monotonic() + 12.0
+    elif not math.isfinite(deadline):
+        raise ValueError("frame extraction deadline must be finite")
     qscale = max(2, min(31, round((100 - jpeg_quality) * 0.29 + 2)))
     scale = (
         f"scale='min({max_edge},iw)':'min({max_edge},ih)':"
@@ -640,6 +673,7 @@ def _extract_frames_at_timestamps(
                 "-ss", f"{timestamp:.3f}", "-i", str(video),
                 "-frames:v", "1",
                 "-vf", scale,
+                "-pix_fmt", "yuvj420p",
                 "-q:v", str(qscale), str(target),
             ],
             check=True,
@@ -660,14 +694,21 @@ def _extract_ratio_frames(
     profile: str,
     max_edge: int = 768,
 ) -> list[Path]:
-    duration = _ffprobe_duration(video)
-    timestamps = _ratio_timestamps(duration, profile)
+    deadline = time.monotonic() + 12.0
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("12-second frame extraction budget exhausted")
+    last_video_pts = _ffprobe_video_last_pts(
+        video, timeout_s=min(3.0, remaining)
+    )
+    timestamps = _ratio_timestamps(last_video_pts, profile)
     return _extract_frames_at_timestamps(
         video=video,
         workdir=workdir,
         timestamps=timestamps,
         max_edge=max_edge,
         jpeg_quality=85,
+        deadline=deadline,
     )
 
 

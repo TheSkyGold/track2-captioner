@@ -8,6 +8,7 @@ Run with::
 from __future__ import annotations
 
 import math
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -104,6 +105,85 @@ def test_ratio_timestamp_validation() -> None:
     )
 
 
+def _run_fixture_ffmpeg(arguments: list[str]) -> None:
+    executable = shutil.which("ffmpeg")
+    assert executable is not None, "real-media sampling tests require ffmpeg"
+    subprocess.run(
+        [executable, "-hide_banner", "-loglevel", "error", "-y", *arguments],
+        check=True,
+        capture_output=True,
+        timeout=10.0,
+    )
+
+
+def test_real_low_fps_clip_extracts_all_ratio_frames() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        video = root / "low_fps.mp4"
+        workdir = root / "frames"
+        workdir.mkdir()
+        _run_fixture_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:r=1:d=2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(video),
+            ]
+        )
+
+        assert pipeline._ffprobe_duration(video) == 2.0
+        assert pipeline._ffprobe_video_last_pts(video, timeout_s=3.0) == 1.0
+        frames = _extract_ratio_frames(
+            video, workdir, "endpoint_aware", max_edge=64
+        )
+        assert len(frames) == 8
+        assert all(frame.stat().st_size > 0 for frame in frames)
+
+
+def test_real_audio_longer_than_video_uses_video_timeline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        video = root / "audio_long.mp4"
+        workdir = root / "frames"
+        workdir.mkdir()
+        _run_fixture_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64:r=5:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(video),
+            ]
+        )
+
+        assert pipeline._ffprobe_duration(video) >= 1.9
+        assert pipeline._ffprobe_video_last_pts(video, timeout_s=3.0) == 0.8
+        frames = _extract_ratio_frames(
+            video, workdir, "endpoint_aware", max_edge=64
+        )
+        assert len(frames) == 8
+        assert all(frame.stat().st_size > 0 for frame in frames)
+
+
 def test_official_repo_indices_match_reference_and_edges() -> None:
     assert _official_repo_indices(60) == [
         0,
@@ -144,6 +224,11 @@ def test_official_repo_indices_match_reference_and_edges() -> None:
         14,
         16,
     ]
+    _assert_raises(
+        ValueError,
+        lambda: _official_repo_indices(60, target=1),
+        "target=1 cannot preserve both the first and last frame",
+    )
     for total_frames in (0, -1):
         _assert_raises(
             ValueError,
@@ -342,6 +427,8 @@ def test_timestamp_extractor_command_order_and_nonempty_outputs() -> None:
                 "1",
                 "-vf",
                 expected_scale,
+                "-pix_fmt",
+                "yuvj420p",
                 "-q:v",
                 "6",
                 str(workdir / f"leader_{index:02d}.jpg"),
@@ -377,6 +464,19 @@ def test_timestamp_extractor_rejects_one_missing_or_empty_frame() -> None:
             )
         assert "1" in str(error) and "2" in str(error)
         assert "8" not in str(error), "error text hardcodes an eight-frame request"
+
+
+def test_timestamp_extractor_rejects_empty_timestamps() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        workdir = Path(directory)
+        video = workdir / "clip.mp4"
+        with patch("app.pipeline.subprocess.run") as run:
+            _assert_raises(
+                ValueError,
+                lambda: _extract_frames_at_timestamps(video, workdir, [], 768, 85),
+                "an empty timestamp request was accepted",
+            )
+        run.assert_not_called()
 
 
 def test_timestamp_extractor_enforces_deadline_and_timestamp_validation() -> None:
@@ -418,7 +518,9 @@ def test_ratio_extractor_uses_ffprobe_and_never_scene_detection() -> None:
         video = workdir / "clip.mp4"
         expected_timestamps = _ratio_timestamps(30.0, "endpoint_aware")
         expected_frames = [workdir / f"leader_{index:02d}.jpg" for index in range(1, 9)]
-        with patch("app.pipeline._ffprobe_duration", return_value=30.0) as ffprobe, patch(
+        with patch("app.pipeline.time.monotonic", side_effect=[100.0, 100.0]), patch(
+            "app.pipeline._ffprobe_video_last_pts", return_value=30.0
+        ) as ffprobe, patch(
             "app.pipeline._extract_frames_at_timestamps", return_value=expected_frames
         ) as extract, patch(
             "app.pipeline._extract_scene_frames",
@@ -431,15 +533,55 @@ def test_ratio_extractor_uses_ffprobe_and_never_scene_detection() -> None:
             )
 
         assert frames == expected_frames
-        ffprobe.assert_called_once_with(video)
+        ffprobe.assert_called_once_with(video, timeout_s=3.0)
         extract.assert_called_once_with(
             video=video,
             workdir=workdir,
             timestamps=expected_timestamps,
             max_edge=768,
             jpeg_quality=85,
+            deadline=112.0,
         )
         scene_extract.assert_not_called()
+
+
+def test_ratio_extractor_bounds_ffprobe_timeout_and_propagates_it() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        workdir = Path(directory)
+        video = workdir / "clip.mp4"
+        timeout = subprocess.TimeoutExpired(["ffprobe"], 3.0)
+        with patch(
+            "app.pipeline.subprocess.check_output", side_effect=timeout
+        ) as ffprobe, patch("app.pipeline._extract_frames_at_timestamps") as extract:
+            caught = _assert_raises(
+                subprocess.TimeoutExpired,
+                lambda: _extract_ratio_frames(video, workdir, "endpoint_aware"),
+                "ffprobe timeout was swallowed",
+            )
+
+        assert caught is timeout
+        command = ffprobe.call_args.args[0]
+        assert command[command.index("-select_streams") + 1] == "v:0"
+        assert command[command.index("-show_entries") + 1] == "packet=pts_time"
+        assert 0.0 < ffprobe.call_args.kwargs["timeout"] <= 3.0
+        extract.assert_not_called()
+
+
+def test_ratio_extractor_shares_one_twelve_second_deadline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        workdir = Path(directory)
+        video = workdir / "clip.mp4"
+        expected_frames = [workdir / f"leader_{index:02d}.jpg" for index in range(1, 9)]
+        with patch("app.pipeline.time.monotonic", side_effect=[100.0, 100.0]), patch(
+            "app.pipeline.subprocess.check_output", return_value="10.0\n"
+        ) as ffprobe, patch(
+            "app.pipeline._extract_frames_at_timestamps", return_value=expected_frames
+        ) as extract:
+            frames = _extract_ratio_frames(video, workdir, "endpoint_aware")
+
+        assert frames == expected_frames
+        assert ffprobe.call_args.kwargs["timeout"] == 3.0
+        assert extract.call_args.kwargs["deadline"] == 112.0
 
 
 def test_invalid_ffprobe_output_is_rejected_before_extraction() -> None:
@@ -463,6 +605,8 @@ def main() -> None:
     test_public_timestamp_profiles_are_exact()
     test_thirty_second_profiles_are_ordered_and_bounded()
     test_ratio_timestamp_validation()
+    test_real_low_fps_clip_extracts_all_ratio_frames()
+    test_real_audio_longer_than_video_uses_video_timeline()
     test_official_repo_indices_match_reference_and_edges()
     test_ffmpeg_fps_extract_command_and_nonempty_sorted_output()
     test_ffmpeg_fps_extract_rejects_empty_output_and_invalid_controls()
@@ -471,8 +615,11 @@ def main() -> None:
     test_official_repo_extraction_rejects_invalid_media_metadata()
     test_timestamp_extractor_command_order_and_nonempty_outputs()
     test_timestamp_extractor_rejects_one_missing_or_empty_frame()
+    test_timestamp_extractor_rejects_empty_timestamps()
     test_timestamp_extractor_enforces_deadline_and_timestamp_validation()
     test_ratio_extractor_uses_ffprobe_and_never_scene_detection()
+    test_ratio_extractor_bounds_ffprobe_timeout_and_propagates_it()
+    test_ratio_extractor_shares_one_twelve_second_deadline()
     test_invalid_ffprobe_output_is_rejected_before_extraction()
     print("leader_parity_sampling_ok")
 
